@@ -1,11 +1,4 @@
-## Project Context
-
-- System title: # Heads-Up Pre-Flop Poker Strategy Analyzer
-- Theme: Poker
-- Project Plan:
-
-
-**Module plan:**
+# Heads-Up Pre-Flop Poker Strategy Analyzer
 
 ## System Overview
 
@@ -103,30 +96,3 @@ This topic selection fits poker strategy analysis naturally. **Propositional Log
 The progression from rules → search → optimization → game theory → learning demonstrates how different AI paradigms complement each other. Each topic addresses a distinct aspect: logic provides structure, search finds solutions, optimization refines strategies, game theory establishes baselines, and RL enables adaptation.
 
 Trade-offs considered: Supervised Learning could predict opponent actions but was omitted to focus on strategic optimization. First-Order Logic could encode more complex relationships but Propositional Logic suffices for pre-flop rules. For Game Theory, computing Nash equilibrium from scratch would be computationally intensive; instead, the system references known equilibrium solutions and focuses on comparative analysis, which demonstrates game theory concepts while remaining feasible. The focus on pre-flop (rather than full game trees) makes the system feasible while still demonstrating all required concepts effectively.
-
-## Constraints
-
-- 5-6 modules total, each tied to course topics.
-- Each module must have clear inputs/outputs and tests.
-- Align module timing with the course schedule.
-
-## How the Agent Should Help
-
-- Draft plans for each module before coding.
-- Suggest clean architecture and module boundaries.
-- Identify missing tests and edge cases.
-- Review work against the rubric using the code-review skill.
-
-## Agent Workflow
-
-1. Ask for the current module spec from `README.md`.
-2. Produce a plan (use "Plan" mode if available).
-3. Wait for approval before writing or editing code.
-4. After implementation, run the code-review skill and list gaps.
-
-## Key References
-
-- Project Instructions: https://csc-343.path.app/projects/project-2-ai-system/ai-system.project.md
-- Code elegance rubric: https://csc-343.path.app/rubrics/code-elegance.rubric.md
-- Course schedule: https://csc-343.path.app/resources/course.schedule.md
-- Rubric: https://csc-343.path.app/projects/project-2-ai-system/ai-system.rubric.md
