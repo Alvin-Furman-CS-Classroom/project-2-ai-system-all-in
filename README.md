@@ -32,34 +32,54 @@ Your system must include 5-6 modules. Fill in the table below as you plan each m
 
 ```
 your-repo/
-├── src/                              # main system source code
-├── unit_tests/                       # unit tests (parallel structure to src/)
-├── integration_tests/                # integration tests (new folder for each module)
+├── Module 1/                         # Module 1 source code (Propositional Logic)
+├── unit_tests/                      # unit tests (parallel structure to modules)
+│   └── Module 1/                    # Module 1 unit tests
+├── docs/                            # documentation files
 ├── .claude/skills/code-review/SKILL.md  # rubric-based agent review
-├── AGENTS.md                         # instructions for your LLM agent
-└── README.md                         # system overview and checkpoints
+├── AGENTS.md                        # instructions for your LLM agent
+└── README.md                        # system overview and checkpoints
 ```
 
 ## Setup
 
-[To be populated as modules are implemented]
+Module 1 is implemented and ready to use.
 
 Dependencies:
-- Python 3.x
-- [Additional dependencies to be added]
+- Python 3.7+ (for dataclasses support)
+- Standard library only (typing, dataclasses)
 
 Setup steps:
-1. [To be added]
+1. Clone the repository
+2. Ensure Python 3.7+ is installed
+3. No additional package installation required (uses only standard library)
 
 Environment variables:
-- [To be added if needed]
+- None required
 
 ## Running
 
-[To be populated as modules are implemented]
+### Module 1: Propositional Logic Hand Decider
+
+```python
+import sys
+sys.path.insert(0, 'Module 1')
+from propositional_logic import propositional_logic_hand_decider
+
+# Example usage
+result = propositional_logic_hand_decider(
+    hand="AA",
+    position="Button",
+    stack_size=50,
+    opponent_tendency="Tight"
+)
+
+print(f"Playable: {result['playable']}")
+print(f"Reason: {result['reason']}")
+```
 
 Commands for running modules:
-- Module 1: `[command to be added]`
+- Module 1: Use Python import as shown above, or run interactively
 - Module 2: `[command to be added]`
 - Module 3: `[command to be added]`
 - Module 4: `[command to be added]`
@@ -67,22 +87,24 @@ Commands for running modules:
 
 ## Testing
 
-**Unit Tests** (`unit_tests/`): Mirror the structure of `src/`. Each module should have corresponding unit tests.
+**Unit Tests** (`unit_tests/`): Mirror the structure of module directories. Each module has corresponding unit tests.
 
 **Integration Tests** (`integration_tests/`): Create a new subfolder for each module beyond the first, demonstrating how modules work together.
 
 Test commands:
-- Run all unit tests: `[command to be added]`
-- Run integration tests: `[command to be added]`
+- Run Module 1 unit tests: `python3 -m unittest "unit_tests/Module 1/test_propositional_logic.py" -v`
+- Run all unit tests: `python3 -m unittest discover unit_tests -v`
+- Run integration tests: `[command to be added]` (for future modules)
 
 Test data:
-- [To be described as tests are implemented]
+- Module 1 tests cover: all hand types, positions, opponent types, stack sizes, edge cases, and backward chaining scenarios
+- 49 unit tests covering all functionality
 
 ## Checkpoint Log
 
 | Checkpoint | Date | Modules Included | Status | Evidence |
 | ---------- | ---- | ---------------- | ------ | -------- |
-| 1 | Wednesday, Feb 11 | Module 1 (Propositional Logic) | [Status to be updated] | [Evidence to be added] |
+| 1 | Wednesday, Feb 11 | Module 1 (Propositional Logic) | ✅ Complete | Implementation: `Module 1/propositional_logic.py`, Tests: `unit_tests/Module 1/test_propositional_logic.py` (49 tests), Reports: `checkpoint_1_elegance_report.md`, `checkpoint_1_module_report.md` |
 | 2 | Thursday, Feb 26 | Modules 1-2 (Propositional Logic, Informed Search) | [Status to be updated] | [Evidence to be added] |
 | 3 | Thursday, March 19 | Modules 1-3 (Propositional Logic, Informed Search, Advanced Search/Optimization) | [Status to be updated] | [Evidence to be added] |
 | 4 | Thursday, April 2 | Modules 1-4 (All except Reinforcement Learning) | [Status to be updated] | [Evidence to be added] |
@@ -95,8 +117,8 @@ Before each module:
 1. Write a short module spec in this README (inputs, outputs, dependencies, tests).
 2. Ask the agent to propose a plan in "Plan" mode.
 3. Review and edit the plan. You must understand and approve the approach.
-4. Implement the module in `src/`.
-5. Unit test the module, placing tests in `unit_tests/` (parallel structure to `src/`).
+4. Implement the module in the appropriate module directory (e.g., `Module 1/`).
+5. Unit test the module, placing tests in `unit_tests/` (parallel structure to module directories).
 6. For modules beyond the first, add integration tests in `integration_tests/` (new subfolder per module).
 7. Run a rubric review using the code-review skill at `.claude/skills/code-review/SKILL.md`.
 

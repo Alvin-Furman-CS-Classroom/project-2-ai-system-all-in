@@ -8,7 +8,6 @@ from typing import Dict, List, Set, Tuple, Optional
 from dataclasses import dataclass
 
 # Ordered list of 169 hands (rank 1 = best), matching POKER_HAND_WIN_PERCENTAGES.md.
-# Tier: 1-30 Premium, 31-60 Strong, 61-87 Playable, 88-116 Marginal, 117-169 Weak.
 HAND_RANK_LIST = [
     "AA", "KK", "QQ", "JJ", "TT", "99", "88", "77", "KAs", "QAs", "JAs", "KAo", "QAo", "TAs", "66", "JAo", "QKs", "9As", "TAo", "JKs", "8As", "TKs", "5As", "QKo", "9Ao", "JKo", "7As", "TKo", "JQs", "6As",
     "8Ao", "4As", "55", "9Ks", "3As", "6Ao", "8Ks", "TQs", "JQo", "2As", "9Ko", "9Qs", "TJs", "7Ks", "5Ao", "4Ao", "7Ao", "6Ks", "44", "TQo", "7Ko", "3Ao", "9Qo", "8Qs", "8Ko", "9Js", "TJo", "5Ks", "2Ao", "6Ko",
@@ -16,6 +15,16 @@ HAND_RANK_LIST = [
     "5Js", "8To", "4Js", "5Qo", "7Jo", "4Qo", "79s", "6Ts", "3Qo", "7To", "3Js", "6Jo", "89o", "5Jo", "2Js", "69s", "5Ts", "2Qo", "78s", "68s", "79o", "4Ts", "6To", "4Jo", "3Jo", "59s", "67s", "3Ts",
     "2Ts", "2Jo", "78o", "58s", "5To", "69o", "49s", "57s", "39s", "4To", "48s", "29s", "56s", "3To", "68o", "59o", "67o", "47s", "45s", "58o", "2To", "49o", "38s", "57o", "39o", "46s", "35s", "28s", "37s", "29o", "56o", "34s", "36s", "48o", "47o", "45o", "46o", "27s", "25s", "26s", "24s", "37o", "28o", "38o", "36o", "35o", "34o", "23s", "27o", "25o", "26o", "24o", "23o",
 ]
+
+# Hand strength tier thresholds (rank 1 = best)
+HAND_STRENGTH_PREMIUM_MAX = 30
+HAND_STRENGTH_STRONG_MAX = 60
+HAND_STRENGTH_PLAYABLE_MAX = 87
+HAND_STRENGTH_MARGINAL_MAX = 116
+
+# Stack size thresholds (in big blinds)
+STACK_SIZE_ULTRA_SHORT_MAX = 10
+STACK_SIZE_SHORT_MAX = 20
 
 
 @dataclass
@@ -47,83 +56,6 @@ class KnowledgeBase:
         """Get the value of a fact, or None if unknown."""
         return self.facts.get(fact)
     
-    def forward_chain(self) -> Tuple[Dict[str, bool], List[str]]:
-        """
-        Forward chaining inference: derive new facts from rules and existing facts.
-        Returns updated facts and inference chain.
-        
-        For CNF rule (¬A ∨ B): if A is true, then B must be true.
-        For CNF rule (A ∨ B): at least one must be true.
-        """
-        chain = []
-        changed = True
-        
-        while changed:
-            changed = False
-            for rule in self.rules:
-                # Evaluate all clauses in the rule (CNF: all clauses must be satisfied)
-                all_clauses_satisfied = True
-                for clause in rule.clauses:
-                    if not self._evaluate_clause(clause):
-                        all_clauses_satisfied = False
-                        break
-                
-                if all_clauses_satisfied:
-                    # Rule is satisfied, try to derive conclusions
-                    for clause in rule.clauses:
-                        # For CNF clause (¬A ∨ B), if A is true, derive B
-                        for i, literal in enumerate(clause):
-                            if literal.startswith("¬"):
-                                fact = literal[1:]
-                                if fact in self.facts and self.facts[fact]:
-                                    # A is true, so derive the positive literal (B)
-                                    for other_literal in clause:
-                                        if not other_literal.startswith("¬") and other_literal != fact:
-                                            if other_literal not in self.facts:
-                                                self.facts[other_literal] = True
-                                                chain.append(f"Applied {rule.name}: {fact}=True → derived {other_literal}=True")
-                                                changed = True
-                        else:
-                            # Positive literal - if all negated literals are false, this is true
-                            negated_all_false = True
-                            for other_literal in clause:
-                                if other_literal.startswith("¬"):
-                                    negated_fact = other_literal[1:]
-                                    if negated_fact in self.facts and self.facts[negated_fact]:
-                                        negated_all_false = False
-                                        break
-                            
-                            if negated_all_false and literal not in self.facts:
-                                self.facts[literal] = True
-                                chain.append(f"Applied {rule.name}: derived {literal}=True")
-                                changed = True
-        
-        return self.facts.copy(), chain
-    
-    def _evaluate_clause(self, clause: List[str]) -> bool:
-        """Evaluate a CNF clause (disjunction) given current facts."""
-        # Clause is OR of literals, so true if any literal is true
-        for literal in clause:
-            if literal.startswith("¬"):
-                # Negated literal
-                fact = literal[1:]
-                if fact in self.facts and not self.facts[fact]:
-                    return True
-            else:
-                # Positive literal
-                if literal in self.facts and self.facts[literal]:
-                    return True
-        return False
-    
-    def _extract_conclusion(self, rule: CNFRule) -> Optional[str]:
-        """Extract conclusion from rule (e.g., 'playable' from CNF rule)."""
-        # Look for 'playable' or other conclusions in the rule
-        for clause in rule.clauses:
-            for literal in clause:
-                if not literal.startswith("¬") and literal in ["playable", "not_playable"]:
-                    return literal
-        return None
-    
     def query(self, goal: str) -> Tuple[bool, List[str]]:
         """
         Query the knowledge base for a goal using backward chaining.
@@ -145,33 +77,64 @@ class KnowledgeBase:
         # Find rules that can derive this goal
         for rule in self.rules:
             if goal in self._get_conclusions(rule):
-                # Check if rule's premises are satisfied
+                # For CNF rules, we need to check if we can conclude the goal
+                # A clause like (¬A ∨ ¬B ∨ C) means IF (A ∧ B) THEN C
+                # To conclude C, we need A=True AND B=True
                 premises_satisfied = True
                 premise_chain = []
                 
                 for clause in rule.clauses:
-                    clause_satisfied = False
+                    if goal not in clause:
+                        continue  # Skip clauses that don't contain the goal
+                    
+                    # Check if all premises (non-goal literals) are satisfied
+                    # For (¬A ∨ ¬B ∨ C), to conclude C, we need A=True and B=True
+                    all_premises_satisfied = True
+                    clause_premise_chain = []
+                    
                     for literal in clause:
                         if literal == goal:
                             continue  # Skip the conclusion itself
                         
+                        premise_satisfied = False
                         if literal.startswith("¬"):
+                            # Negated premise like ¬A in (¬A ∨ ¬B ∨ C)
+                            # To conclude C, we need A to be True (so ¬A is False, forcing C)
                             fact = literal[1:]
-                            result, sub_chain = self._backward_chain(fact, visited.copy())
-                            if not result:  # Negated fact is true if fact is false
-                                clause_satisfied = True
-                                premise_chain.extend(sub_chain)
-                                break
+                            if fact in self.facts:
+                                if self.facts[fact]:  # Fact is True, so negation is False
+                                    premise_satisfied = True
+                                    clause_premise_chain.append(f"Fact '{fact}' is True → '{literal}' is False (forces conclusion)")
+                            else:
+                                # Try to prove the fact
+                                result, sub_chain = self._backward_chain(fact, visited.copy())
+                                if result:  # Fact is True, so negation is False
+                                    premise_satisfied = True
+                                    clause_premise_chain.extend(sub_chain)
                         else:
-                            result, sub_chain = self._backward_chain(literal, visited.copy())
-                            if result:
-                                clause_satisfied = True
-                                premise_chain.extend(sub_chain)
-                                break
+                            # Positive premise: fact must be True
+                            if literal in self.facts:
+                                if self.facts[literal]:
+                                    premise_satisfied = True
+                                    clause_premise_chain.append(f"Fact '{literal}' is True")
+                            else:
+                                # Try to prove the fact
+                                result, sub_chain = self._backward_chain(literal, visited.copy())
+                                if result:
+                                    premise_satisfied = True
+                                    clause_premise_chain.extend(sub_chain)
+                        
+                        if not premise_satisfied:
+                            all_premises_satisfied = False
+                            break
                     
-                    if not clause_satisfied:
-                        premises_satisfied = False
+                    if all_premises_satisfied:
+                        # This clause allows us to conclude the goal
+                        premise_chain.extend(clause_premise_chain)
+                        premises_satisfied = True
                         break
+                    else:
+                        premises_satisfied = False
                 
                 if premises_satisfied:
                     self.facts[goal] = True
@@ -184,10 +147,12 @@ class KnowledgeBase:
     def _get_conclusions(self, rule: CNFRule) -> List[str]:
         """Extract all conclusions from a rule."""
         conclusions = []
+        valid_conclusions = ["playable", "stack_ok", "can_proceed", "final_playable"]
         for clause in rule.clauses:
             for literal in clause:
-                if not literal.startswith("¬") and literal in ["playable", "not_playable"]:
-                    conclusions.append(literal)
+                if not literal.startswith("¬") and literal in valid_conclusions:
+                    if literal not in conclusions:
+                        conclusions.append(literal)
         return conclusions
     
     def to_dict(self) -> Dict:
@@ -208,13 +173,13 @@ class KnowledgeBase:
 
 def _rank_to_tier(rank: int) -> str:
     """Rank 1-169 -> tier name."""
-    if rank <= 30:
+    if rank <= HAND_STRENGTH_PREMIUM_MAX:
         return "Premium"
-    if rank <= 60:
+    if rank <= HAND_STRENGTH_STRONG_MAX:
         return "Strong"
-    if rank <= 87:
+    if rank <= HAND_STRENGTH_PLAYABLE_MAX:
         return "Playable"
-    if rank <= 116:
+    if rank <= HAND_STRENGTH_MARGINAL_MAX:
         return "Marginal"
     return "Weak"
 
@@ -277,15 +242,12 @@ def _create_cnf_rules() -> List[CNFRule]:
     rules = []
     
     # Rule 1: Position must be valid
-    # IF position_valid THEN (can proceed), else not_playable
-    # CNF: (¬position_valid ∨ can_proceed) ∧ (position_valid ∨ not_playable)
+    # IF position_valid THEN can_proceed
+    # CNF: (¬position_valid ∨ can_proceed)
     rules.append(CNFRule(
         name="Rule 1: Valid Position",
-        cnf="(¬position_valid ∨ can_proceed) ∧ (position_valid ∨ not_playable)",
-        clauses=[
-            ["¬position_valid", "can_proceed"],
-            ["position_valid", "not_playable"]
-        ],
+        cnf="(¬position_valid ∨ can_proceed)",
+        clauses=[["¬position_valid", "can_proceed"]],
         description="Position must be Button or Big Blind to proceed"
     ))
     
@@ -340,34 +302,33 @@ def _create_cnf_rules() -> List[CNFRule]:
     ))
     
     # Rule 7: Stack size for ultra-short stack
-    # IF (stack_size < 10 ∧ hand_strength_premium) THEN playable
-    # CNF: (stack_size_adequate ∨ hand_strength_premium ∨ playable)
-    # Actually: (¬stack_size_ultra_short ∨ ¬hand_strength_premium ∨ playable)
+    # IF (stack_size_ultra_short ∧ hand_strength_premium) THEN stack_ok
+    # CNF: (¬stack_size_ultra_short ∨ ¬hand_strength_premium ∨ stack_ok)
     rules.append(CNFRule(
         name="Rule 7: Ultra-Short Stack Premium",
-        cnf="(¬stack_size_ultra_short ∨ ¬hand_strength_premium ∨ playable)",
-        clauses=[["¬stack_size_ultra_short", "¬hand_strength_premium", "playable"]],
-        description="Ultra-short stack (<10 BB) requires Premium hands"
+        cnf="(¬stack_size_ultra_short ∨ ¬hand_strength_premium ∨ stack_ok)",
+        clauses=[["¬stack_size_ultra_short", "¬hand_strength_premium", "stack_ok"]],
+        description="Ultra-short stack (<10 BB) requires Premium hands → stack_ok"
     ))
     
     # Rule 8: Stack size for short stack
-    # IF (stack_size < 20 ∧ hand_strength_strong_or_better) THEN playable
-    # CNF: (¬stack_size_short ∨ ¬hand_strength_strong ∨ playable)
+    # IF (stack_size_short ∧ hand_strength_strong_or_better) THEN stack_ok
+    # CNF: (¬stack_size_short ∨ ¬hand_strength_strong ∨ stack_ok)
     rules.append(CNFRule(
         name="Rule 8: Short Stack Strong",
-        cnf="(¬stack_size_short ∨ ¬hand_strength_strong ∨ playable)",
-        clauses=[["¬stack_size_short", "¬hand_strength_strong", "playable"]],
-        description="Short stack (10-20 BB) requires Strong+ hands"
+        cnf="(¬stack_size_short ∨ ¬hand_strength_strong ∨ stack_ok)",
+        clauses=[["¬stack_size_short", "¬hand_strength_strong", "stack_ok"]],
+        description="Short stack (10-20 BB) requires Strong+ hands → stack_ok"
     ))
     
-    # Rule 9: Adequate stack allows all playable hands
-    # IF (stack_size_adequate ∧ can_proceed) THEN (stack_ok)
-    # CNF: (¬stack_size_adequate ∨ ¬can_proceed ∨ stack_ok)
+    # Rule 9: Adequate stack allows all hands
+    # IF stack_size_adequate THEN stack_ok
+    # CNF: (¬stack_size_adequate ∨ stack_ok)
     rules.append(CNFRule(
         name="Rule 9: Adequate Stack",
-        cnf="(¬stack_size_adequate ∨ ¬can_proceed ∨ stack_ok)",
-        clauses=[["¬stack_size_adequate", "¬can_proceed", "stack_ok"]],
-        description="Adequate stack (≥20 BB) allows all playable hands"
+        cnf="(¬stack_size_adequate ∨ stack_ok)",
+        clauses=[["¬stack_size_adequate", "stack_ok"]],
+        description="Adequate stack (≥20 BB) allows all hands → stack_ok"
     ))
     
     # Rule 10: Final playability
@@ -395,15 +356,21 @@ def _derive_facts_from_input(
     
     # Position facts
     pos_lower = position.strip().lower().replace("_", " ")
-    if pos_lower in ("button", "btn"):
-        kb.add_fact("position_Button", True)
-        kb.add_fact("position_Big_Blind", False)
-        facts_added.append("position_Button = True")
-    elif pos_lower in ("big blind", "bb", "bigblind"):
-        kb.add_fact("position_Button", False)
-        kb.add_fact("position_Big_Blind", True)
-        facts_added.append("position_Big_Blind = True")
-    else:
+    position_mapping = {
+        ("button", "btn"): ("position_Button", True, "position_Big_Blind", False),
+        ("big blind", "bb", "bigblind"): ("position_Button", False, "position_Big_Blind", True),
+    }
+    
+    position_found = False
+    for valid_positions, (button_fact, button_val, bb_fact, bb_val) in position_mapping.items():
+        if pos_lower in valid_positions:
+            kb.add_fact(button_fact, button_val)
+            kb.add_fact(bb_fact, bb_val)
+            facts_added.append(f"{bb_fact} = {bb_val}")
+            position_found = True
+            break
+    
+    if not position_found:
         kb.add_fact("position_valid", False)
         facts_added.append("position_valid = False")
         return None, None, facts_added
@@ -419,34 +386,92 @@ def _derive_facts_from_input(
     hand_tier = _rank_to_tier(hand_rank)
     
     # Add hand strength category facts
-    kb.add_fact("hand_strength_premium", hand_rank <= 30)
-    kb.add_fact("hand_strength_strong", hand_rank <= 60)
-    kb.add_fact("hand_strength_playable", hand_rank <= 87)
-    kb.add_fact("hand_strength_marginal", hand_rank <= 116)
+    kb.add_fact("hand_strength_premium", hand_rank <= HAND_STRENGTH_PREMIUM_MAX)
+    kb.add_fact("hand_strength_strong", hand_rank <= HAND_STRENGTH_STRONG_MAX)
+    kb.add_fact("hand_strength_playable", hand_rank <= HAND_STRENGTH_PLAYABLE_MAX)
+    kb.add_fact("hand_strength_marginal", hand_rank <= HAND_STRENGTH_MARGINAL_MAX)
     facts_added.append(f"hand_strength_{hand_tier.lower()} = True (rank {hand_rank})")
     
     # Opponent tendency facts
     opp_lower = opponent_tendency.strip().lower()
-    kb.add_fact("opponent_Tight", opp_lower == "tight")
-    kb.add_fact("opponent_Loose", opp_lower == "loose")
-    kb.add_fact("opponent_Aggressive", opp_lower == "aggressive")
-    kb.add_fact("opponent_Passive", opp_lower == "passive")
-    kb.add_fact("opponent_Unknown", opp_lower == "unknown")
+    opponent_types = ["Tight", "Loose", "Aggressive", "Passive", "Unknown"]
+    for opp_type in opponent_types:
+        kb.add_fact(f"opponent_{opp_type}", opp_lower == opp_type.lower())
     
     # Combined opponent facts for rules
     kb.add_fact("opponent_Aggressive_Loose", opp_lower in ("aggressive", "loose"))
     facts_added.append(f"opponent_{opponent_tendency} = True")
     
     # Stack size facts
-    kb.add_fact("stack_size_ultra_short", stack_size < 10)
-    kb.add_fact("stack_size_short", 10 <= stack_size < 20)
-    kb.add_fact("stack_size_adequate", stack_size >= 20)
-    facts_added.append(f"stack_size_adequate = {stack_size >= 20}")
+    kb.add_fact("stack_size_ultra_short", stack_size < STACK_SIZE_ULTRA_SHORT_MAX)
+    kb.add_fact("stack_size_short", STACK_SIZE_ULTRA_SHORT_MAX <= stack_size < STACK_SIZE_SHORT_MAX)
+    kb.add_fact("stack_size_adequate", stack_size >= STACK_SIZE_SHORT_MAX)
+    facts_added.append(f"stack_size_adequate = {stack_size >= STACK_SIZE_SHORT_MAX}")
     
     return hand_rank, hand_tier, facts_added
 
 
-def first_order_logic_hand_decider(
+def _derive_stack_ok_fallback(kb: KnowledgeBase) -> Tuple[bool, str]:
+    """Fallback logic to derive stack_ok if backward chaining fails."""
+    stack_size_ultra_short = kb.get_fact("stack_size_ultra_short")
+    stack_size_short = kb.get_fact("stack_size_short")
+    stack_size_adequate = kb.get_fact("stack_size_adequate")
+    hand_strength_premium = kb.get_fact("hand_strength_premium")
+    hand_strength_strong = kb.get_fact("hand_strength_strong")
+    
+    if stack_size_ultra_short and hand_strength_premium:
+        kb.add_fact("stack_ok", True)
+        return True, "Rule 7 (fallback): ultra-short stack with premium hand → stack_ok"
+    elif stack_size_short and hand_strength_strong:
+        kb.add_fact("stack_ok", True)
+        return True, "Rule 8 (fallback): short stack with strong+ hand → stack_ok"
+    elif stack_size_adequate:
+        kb.add_fact("stack_ok", True)
+        return True, "Rule 9 (fallback): adequate stack → stack_ok"
+    else:
+        kb.add_fact("stack_ok", False)
+        return False, "Rules 7-9 (fallback): stack conditions not met → not stack_ok"
+
+
+def _derive_playable(kb: KnowledgeBase) -> bool:
+    """Derive playable fact based on position, hand strength, and opponent."""
+    playable_rules = [
+        # (position_fact, opponent_fact, strength_fact, rule_message)
+        ("position_Button", "opponent_Tight", "hand_strength_marginal", "Rule 3: Button vs Tight with Marginal+ → playable"),
+        ("position_Button", "opponent_Aggressive_Loose", "hand_strength_strong", "Rule 2: Button vs Aggressive/Loose with Strong+ → playable"),
+        ("position_Button", "opponent_Passive", "hand_strength_playable", "Rule 4: Button vs Passive with Playable+ → playable"),
+        ("position_Button", "opponent_Unknown", "hand_strength_playable", "Rule 5: Button vs Unknown with Playable+ → playable"),
+        ("position_Big_Blind", "opponent_Unknown", "hand_strength_strong", "Rule 6: Big Blind vs Unknown with Strong+ → playable"),
+    ]
+    
+    for pos_fact, opp_fact, strength_fact, rule_msg in playable_rules:
+        if (kb.get_fact(pos_fact) and 
+            kb.get_fact(opp_fact) and 
+            kb.get_fact(strength_fact)):
+            kb.add_fact("playable", True)
+            kb.inference_chain.append(rule_msg)
+            return True
+    
+    kb.add_fact("playable", False)
+    kb.inference_chain.append("No rule satisfied → not playable")
+    return False
+
+
+def _derive_final_playable_fallback(kb: KnowledgeBase) -> Tuple[bool, str]:
+    """Fallback logic to derive final_playable if backward chaining fails."""
+    can_proceed = kb.get_fact("can_proceed")
+    stack_ok = kb.get_fact("stack_ok")
+    playable = kb.get_fact("playable")
+    
+    if can_proceed and stack_ok and playable:
+        kb.add_fact("final_playable", True)
+        return True, "Rule 10 (fallback): can_proceed AND stack_ok AND playable → final_playable"
+    else:
+        kb.add_fact("final_playable", False)
+        return False, "Rule 10 (fallback): conditions not met → not final_playable"
+
+
+def propositional_logic_hand_decider(
     hand: str,
     position: str,
     stack_size: int,
@@ -463,15 +488,13 @@ def first_order_logic_hand_decider(
     
     Returns:
         Dict with: playable (bool), reason (str), knowledge_base (dict with CNF rules),
-        hand_normalized (Optional[str]), hand_rank (Optional[int]), hand_tier (Optional[str]),
         inference_chain (list).
     """
     # Create knowledge base
     kb = KnowledgeBase()
     
     # Add CNF rules
-    rules = _create_cnf_rules()
-    for rule in rules:
+    for rule in _create_cnf_rules():
         kb.add_rule(rule)
     
     # Derive facts from input
@@ -486,97 +509,56 @@ def first_order_logic_hand_decider(
             "playable": False,
             "reason": "Unrecognized hand; cannot evaluate." if hand_norm is None else "Invalid position.",
             "knowledge_base": kb.to_dict(),
-            "hand_normalized": hand_norm,
-            "hand_rank": None,
-            "hand_tier": None,
             "inference_chain": facts_added,
         }
     
-    hand_norm = _normalize_hand(hand) or hand
+    # Initialize inference chain
+    kb.inference_chain = facts_added.copy()
     
-    # Forward chaining inference
-    updated_facts, forward_chain = kb.forward_chain()
-    kb.facts = updated_facts
-    kb.inference_chain = facts_added + forward_chain
-    
-    # Apply rules to derive intermediate facts
+    # Apply rules to derive intermediate facts (needed for backward chaining)
     # Rule 1: can_proceed if position_valid
     if kb.get_fact("position_valid"):
         kb.add_fact("can_proceed", True)
         kb.inference_chain.append("Rule 1: position_valid → can_proceed")
     
-    # Rule 7-9: stack_ok based on stack size and hand strength
-    if stack_size < 10:
-        if kb.get_fact("hand_strength_premium"):
-            kb.add_fact("stack_ok", True)
-            kb.inference_chain.append("Rule 7: ultra-short stack with premium hand → stack_ok")
-        else:
-            kb.add_fact("stack_ok", False)
-            kb.inference_chain.append("Rule 7: ultra-short stack requires premium hand")
-    elif stack_size < 20:
-        if kb.get_fact("hand_strength_strong"):
-            kb.add_fact("stack_ok", True)
-            kb.inference_chain.append("Rule 8: short stack with strong+ hand → stack_ok")
-        else:
-            kb.add_fact("stack_ok", False)
-            kb.inference_chain.append("Rule 8: short stack requires strong+ hand")
-    else:
-        kb.add_fact("stack_ok", True)
-        kb.inference_chain.append("Rule 9: adequate stack → stack_ok")
+    # Use backward chaining to derive stack_ok (Rules 7-9)
+    kb.inference_chain.append("Using backward chaining to query for stack_ok")
+    stack_ok_result, stack_ok_chain = kb.query("stack_ok")
+    
+    # If backward chaining didn't work, fall back to direct evaluation
+    if not stack_ok_result:
+        stack_ok_result, fallback_msg = _derive_stack_ok_fallback(kb)
+        kb.inference_chain.append(fallback_msg)
+    
+    # Add backward chaining inference chain for stack_ok
+    kb.inference_chain.extend(stack_ok_chain)
     
     # Rules 2-6: playable based on position, hand strength, and opponent
-    playable_derived = False
-    if kb.get_fact("position_Button"):
-        if kb.get_fact("opponent_Tight") and kb.get_fact("hand_strength_marginal"):
-            kb.add_fact("playable", True)
-            kb.inference_chain.append("Rule 3: Button vs Tight with Marginal+ → playable")
-            playable_derived = True
-        elif kb.get_fact("opponent_Aggressive_Loose") and kb.get_fact("hand_strength_strong"):
-            kb.add_fact("playable", True)
-            kb.inference_chain.append("Rule 2: Button vs Aggressive/Loose with Strong+ → playable")
-            playable_derived = True
-        elif kb.get_fact("opponent_Passive") and kb.get_fact("hand_strength_playable"):
-            kb.add_fact("playable", True)
-            kb.inference_chain.append("Rule 4: Button vs Passive with Playable+ → playable")
-            playable_derived = True
-        elif kb.get_fact("opponent_Unknown") and kb.get_fact("hand_strength_playable"):
-            kb.add_fact("playable", True)
-            kb.inference_chain.append("Rule 5: Button vs Unknown with Playable+ → playable")
-            playable_derived = True
+    _derive_playable(kb)
     
-    if kb.get_fact("position_Big_Blind") and kb.get_fact("opponent_Unknown") and kb.get_fact("hand_strength_strong"):
-        kb.add_fact("playable", True)
-        kb.inference_chain.append("Rule 6: Big Blind vs Unknown with Strong+ → playable")
-        playable_derived = True
+    # Use backward chaining to query for final_playable (Rule 10)
+    kb.inference_chain.append("Using backward chaining to query for final_playable")
+    playable_result, backward_chain = kb.query("final_playable")
     
-    if not playable_derived:
-        kb.add_fact("playable", False)
-        kb.inference_chain.append("No rule satisfied → not playable")
+    # If backward chaining didn't work, fall back to direct evaluation
+    if not playable_result:
+        playable_result, fallback_msg = _derive_final_playable_fallback(kb)
+        kb.inference_chain.append(fallback_msg)
     
-    # Rule 10: final_playable = can_proceed AND stack_ok AND playable
-    can_proceed = kb.get_fact("can_proceed")
-    stack_ok = kb.get_fact("stack_ok")
-    playable = kb.get_fact("playable")
-    
-    if can_proceed and stack_ok and playable:
-        playable_result = True
-        kb.add_fact("final_playable", True)
-        kb.inference_chain.append("Rule 10: can_proceed AND stack_ok AND playable → final_playable")
-    else:
-        playable_result = False
-        kb.add_fact("final_playable", False)
-        kb.inference_chain.append("Rule 10: conditions not met → not final_playable")
+    # Add backward chaining inference chain
+    kb.inference_chain.extend(backward_chain)
     
     # Build reasoning
+    hand_norm = _normalize_hand(hand) or hand
     if playable_result:
         reason = f"Play {hand_norm}: {hand_tier} hand, {position}, {stack_size} BB vs {opponent_tendency}."
     else:
         reason_parts = [f"Hand {hand_norm} ({hand_tier})"]
-        if kb.get_fact("position_valid") is False:
+        if not kb.get_fact("position_valid"):
             reason_parts.append("invalid position")
-        elif kb.get_fact("playable") is not True:
+        elif not kb.get_fact("playable"):
             reason_parts.append(f"too weak for {position} vs {opponent_tendency}")
-        elif kb.get_fact("stack_ok") is False or kb.get_fact("stack_size_adequate") is False:
+        elif not kb.get_fact("stack_ok"):
             reason_parts.append(f"stack too short ({stack_size} BB)")
         else:
             reason_parts.append("does not meet playability criteria")
@@ -586,8 +568,5 @@ def first_order_logic_hand_decider(
         "playable": playable_result,
         "reason": reason,
         "knowledge_base": kb.to_dict(),
-        "hand_normalized": hand_norm,
-        "hand_rank": hand_rank,
-        "hand_tier": hand_tier,
         "inference_chain": kb.inference_chain,
     }
