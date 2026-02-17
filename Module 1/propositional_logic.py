@@ -349,9 +349,18 @@ def _derive_facts_from_input(
     position: str,
     stack_size: int,
     opponent_tendency: str,
-    kb: KnowledgeBase
+    kb: KnowledgeBase,
+    opponent_bet_size: Optional[float] = None,
 ) -> Tuple[Optional[int], Optional[str], List[str]]:
-    """Derive facts from input and add to knowledge base. Returns (hand_rank, hand_tier, facts_added)."""
+    """
+    Derive facts from input and add to knowledge base.
+
+    Returns:
+        (hand_rank, hand_tier, facts_added)
+
+    Enhancement: opponent_bet_size (if provided) is encoded as a fact,
+    allowing Module 1 to distinguish between opening actions and facing a bet.
+    """
     facts_added = []
     
     # Position facts
@@ -404,9 +413,28 @@ def _derive_facts_from_input(
     
     # Stack size facts
     kb.add_fact("stack_size_ultra_short", stack_size < STACK_SIZE_ULTRA_SHORT_MAX)
-    kb.add_fact("stack_size_short", STACK_SIZE_ULTRA_SHORT_MAX <= stack_size < STACK_SIZE_SHORT_MAX)
+    kb.add_fact(
+        "stack_size_short",
+        STACK_SIZE_ULTRA_SHORT_MAX <= stack_size < STACK_SIZE_SHORT_MAX,
+    )
     kb.add_fact("stack_size_adequate", stack_size >= STACK_SIZE_SHORT_MAX)
     facts_added.append(f"stack_size_adequate = {stack_size >= STACK_SIZE_SHORT_MAX}")
+
+    # Scenario facts: are we facing a bet, and how large is it?
+    if opponent_bet_size is not None and opponent_bet_size > 0:
+        kb.add_fact("facing_bet", True)
+        facts_added.append("facing_bet = True")
+
+        # Very coarse buckets for potential future rules; currently informational.
+        # Small bet: up to 3x big blind
+        kb.add_fact("bet_size_small", opponent_bet_size <= 3)
+        # Medium bet: >3x and up to 6x big blind
+        kb.add_fact("bet_size_medium", 3 < opponent_bet_size <= 6)
+        # Large bet: >6x big blind
+        kb.add_fact("bet_size_large", opponent_bet_size > 6)
+    else:
+        kb.add_fact("facing_bet", False)
+        facts_added.append("facing_bet = False")
     
     return hand_rank, hand_tier, facts_added
 
@@ -476,6 +504,7 @@ def propositional_logic_hand_decider(
     position: str,
     stack_size: int,
     opponent_tendency: str,
+    opponent_bet_size: Optional[float] = None,
 ) -> dict:
     """
     Decide hand playability using propositional logic rules with CNF knowledge base.
@@ -485,6 +514,9 @@ def propositional_logic_hand_decider(
         position: Position ("Button" or "Big Blind").
         stack_size: Stack size in big blinds (integer).
         opponent_tendency: "Tight", "Loose", "Aggressive", "Passive", or "Unknown".
+        opponent_bet_size: Optional opponent bet size in big blinds.
+            - None: opening action (no bet to face)
+            - >0: we are facing a bet of this size (e.g., BB facing a raise)
     
     Returns:
         Dict with: playable (bool), reason (str), knowledge_base (dict with CNF rules),
@@ -497,9 +529,14 @@ def propositional_logic_hand_decider(
     for rule in _create_cnf_rules():
         kb.add_rule(rule)
     
-    # Derive facts from input
+    # Derive facts from input (including whether we are facing a bet)
     hand_rank, hand_tier, facts_added = _derive_facts_from_input(
-        hand, position, stack_size, opponent_tendency, kb
+        hand,
+        position,
+        stack_size,
+        opponent_tendency,
+        kb,
+        opponent_bet_size=opponent_bet_size,
     )
     
     # Check for invalid inputs
