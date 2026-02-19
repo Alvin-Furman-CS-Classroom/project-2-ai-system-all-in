@@ -61,13 +61,13 @@ Poker is an ideal domain for exploring AI concepts because it combines incomplet
 
 **Topics:** Games and Game Theory (Minimax, Nash Equilibrium, Mixed Strategies)
 
-**Input:** Position (Button/Big Blind), stack sizes (tuple), optimized strategies from Modules 2 and 3 (bet sizing recommendations and opening ranges), knowledge base from Module 1. The module references known heads-up pre-flop Nash equilibrium solutions (from established poker solvers or published research) as baseline strategies.
+**Input:** Position (Button/Big Blind), stack sizes (tuple), optional knowledge base from Module 1. Module 4 does not depend on Module 2 or Module 3. It references known heads-up pre-flop Nash equilibrium solutions (from established poker solvers or published research) as baseline strategies.
 
-**Output:** Comparative analysis including: (1) deviation metrics comparing optimized strategies to Nash equilibrium (how different are bet sizes/ranges from equilibrium?), (2) exploitability analysis (how exploitable are the optimized strategies?), (3) equilibrium reference data (equilibrium frequencies and mixed strategies for key decision points). Output format: dictionary with comparison metrics, exploitability scores, and equilibrium reference strategies.
+**Output:** Nash equilibrium reference data (equilibrium frequencies and mixed strategies for key decision points). Optionally: deviation metrics or exploitability analysis if a strategy is provided for comparison. Output format: dictionary with equilibrium strategies, and optionally comparison metrics and exploitability scores.
 
-**Integration:** This module analyzes how the optimized strategies from Modules 2 and 3 compare to theoretical optimal play (Nash equilibrium). The equilibrium reference provides a baseline for Module 2's search results (evaluating how close optimized bet sizes are to equilibrium) and establishes a starting point for Module 5's reinforcement learning (identifying profitable deviations from equilibrium to exploit opponents).
+**Integration:** This module provides the Nash equilibrium baseline for pre-flop play independently of Modules 2 and 3. The equilibrium reference establishes a theoretical baseline for Module 5 (full-hand strategy) and Module 6 (reinforcement learning); other modules may optionally compare their strategies against it.
 
-**Prerequisites:** Course content on Game Theory, Nash Equilibrium, Minimax, and mixed strategies. Modules 1, 2, and 3 for rule constraints, bet sizing, and range data to compare against equilibrium.
+**Prerequisites:** Course content on Game Theory, Nash Equilibrium, Minimax, and mixed strategies. Module 1 (optional) for rule constraints.
 
 ---
 

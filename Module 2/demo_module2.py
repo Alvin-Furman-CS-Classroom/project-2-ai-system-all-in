@@ -3,14 +3,15 @@
 Demo script for Module 2: Optimal Bet Sizing Search
 
 This script demonstrates how Module 2 finds optimal bet sizes using
-informed search algorithms (A*, IDA*, Beam Search).
+optimization and A* search.
 """
 
 import sys
 from pathlib import Path
 
-# Add Module 2 to path
-sys.path.insert(0, str(Path(__file__).parent / "Module 2"))
+# Add Module 2 directory to path (demo may be run from project root or from Module 2)
+_module2_dir = Path(__file__).resolve().parent
+sys.path.insert(0, str(_module2_dir))
 
 from bet_sizing_search import optimal_bet_sizing_search
 
@@ -23,14 +24,15 @@ def print_result(result, scenario):
     print(f"📊 Expected Value: {result['expected_value']:.2f} BB")
     print(f"💭 Reason: {result['reason']}")
     print(f"🔍 Search Algorithm: {result['search_algorithm']}")
-    print(f"🎯 Module 1 Playable: {result['module1_result'].get('playable', False)}")
+    m1 = result.get('module1_result') or {}
+    print(f"🎯 Module 1 Playable: {m1.get('playable', False)}")
 
 
 def main():
     """Run demos of Module 2."""
     print("\n" + "🎰" * 40)
     print("  MODULE 2 DEMO: Optimal Bet Sizing Search")
-    print("  Using Informed Search Algorithms (A*, IDA*, Beam Search)")
+    print("  Using Optimization and A* Search")
     print("🎰" * 40)
     
     print("\n" + "=" * 80)
@@ -51,18 +53,12 @@ def main():
         print_result(result, f"KAs from Button vs {opponent} opponent")
     
     print("\n" + "=" * 80)
-    print("  DEMO 3: Different Search Algorithms")
+    print("  DEMO 3: A* Search for Optimal Bet Size")
     print("=" * 80)
-    hand = "AA"
-    position = "Button"
-    stacks = (50, 50)
-    opponent = "Tight"
-    
-    for algo in ["a_star", "ida_star", "beam_search"]:
-        result = optimal_bet_sizing_search(
-            hand, position, stacks, opponent, search_algorithm=algo
-        )
-        print_result(result, f"AA from Button using {algo}")
+    result = optimal_bet_sizing_search(
+        "AA", "Button", (50, 50), "Tight", search_algorithm="a_star"
+    )
+    print_result(result, "AA from Button using A*")
     
     print("\n" + "=" * 80)
     print("  DEMO 4: Unplayable Hand (Filtered by Module 1)")
