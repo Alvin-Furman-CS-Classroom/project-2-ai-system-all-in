@@ -44,6 +44,62 @@ OPPONENT_PROBABILITIES = {
 # Base pot size for heads-up pre-flop (small blind + big blind)
 BASE_POT_SIZE = 1.5  # 0.5 BB small blind + 1 BB big blind
 
+# Bet size categories for opponent probability adjustments
+# Small (2x-2.5x): opponents call more, fewer folds (getting a good price)
+# Medium (3x-4x): base probabilities (standard sizing)
+# Large (5x+): opponents fold more, fewer calls (facing pressure)
+BET_SIZE_SMALL_MAX = 2.5   # BB
+BET_SIZE_MEDIUM_MAX = 4.0   # BB
+# > 4.0 = large
+
+# Multipliers applied to base probabilities per category
+# (fold_mult, call_mult, raise_mult) - renormalized to sum to 1
+BET_SIZE_ADJUSTMENTS = {
+    "small": (0.90, 1.15, 1.0),   # Fewer folds, more calls
+    "medium": (1.0, 1.0, 1.0),    # No change
+    "large": (1.15, 0.85, 1.0),   # More folds, fewer calls
+}
+
+
+def _get_bet_size_category(bet_size: float) -> str:
+    """Return 'small', 'medium', or 'large' based on bet size in BB."""
+    if bet_size <= BET_SIZE_SMALL_MAX:
+        return "small"
+    if bet_size <= BET_SIZE_MEDIUM_MAX:
+        return "medium"
+    return "large"
+
+
+def _get_adjusted_opponent_probs(
+    opponent_tendency: str,
+    bet_size: float,
+) -> dict[str, float]:
+    """
+    Get opponent probabilities adjusted for bet size category.
+    
+    Larger bets induce more folds; smaller bets get more calls.
+    """
+    opp_probs = OPPONENT_PROBABILITIES.get(
+        opponent_tendency.strip(),
+        OPPONENT_PROBABILITIES["Unknown"]
+    )
+    category = _get_bet_size_category(bet_size)
+    mult_fold, mult_call, mult_raise = BET_SIZE_ADJUSTMENTS[category]
+    
+    fold_prob = opp_probs["fold"] * mult_fold
+    call_prob = opp_probs["call"] * mult_call
+    raise_prob = opp_probs["raise"] * mult_raise
+    
+    # Renormalize to sum to 1
+    total = fold_prob + call_prob + raise_prob
+    if total <= 0:
+        return opp_probs
+    return {
+        "fold": fold_prob / total,
+        "call": call_prob / total,
+        "raise": raise_prob / total,
+    }
+
 
 def load_hand_equity() -> dict[str, float]:
     """
@@ -205,13 +261,11 @@ def calculate_ev(
     if our_investment <= 0:
         return 0.0
     
-    # Get opponent action probabilities
-    # Note: These probabilities may need adjustment based on bet sizing
-    # (e.g., larger bets = more folds), but keeping simple for now
-    opp_probs = OPPONENT_PROBABILITIES.get(
-        opponent_tendency.strip(),
-        OPPONENT_PROBABILITIES["Unknown"]
-    )
+    # Get opponent action probabilities, adjusted for bet size category
+    # Small bets (2x-2.5x): more calls, fewer folds
+    # Medium bets (3x-4x): base probabilities
+    # Large bets (5x+): more folds, fewer calls
+    opp_probs = _get_adjusted_opponent_probs(opponent_tendency, our_investment)
     fold_prob = opp_probs["fold"]
     call_prob = opp_probs["call"]
     raise_prob = opp_probs["raise"]
