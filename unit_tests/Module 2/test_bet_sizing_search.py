@@ -71,6 +71,28 @@ class TestAdjustedProbabilities(unittest.TestCase):
                 total = probs["fold"] + probs["call"] + probs["raise"]
                 self.assertAlmostEqual(total, 1.0, places=5)
 
+    def test_small_medium_large_patterns_all_tendencies(self):
+        """
+        For all opponent tendencies, small bets should induce more calls and fewer folds
+        than medium bets, and large bets should induce more folds and fewer calls than medium.
+        """
+        tendencies = ["Tight", "Loose", "Aggressive", "Passive", "Unknown"]
+        small_size = 2.0
+        medium_size = 3.0
+        large_size = 6.0
+        for tendency in tendencies:
+            small = _get_adjusted_opponent_probs(tendency, small_size)
+            medium = _get_adjusted_opponent_probs(tendency, medium_size)
+            large = _get_adjusted_opponent_probs(tendency, large_size)
+
+            # Small vs medium: more calls, fewer folds
+            self.assertLessEqual(small["fold"], medium["fold"])
+            self.assertGreaterEqual(small["call"], medium["call"])
+
+            # Large vs medium: more folds, fewer calls
+            self.assertGreaterEqual(large["fold"], medium["fold"])
+            self.assertLessEqual(large["call"], medium["call"])
+
 
 class TestExpectedValue(unittest.TestCase):
     """Test Expected Value calculation."""
@@ -167,6 +189,65 @@ class TestAStarSearch(unittest.TestCase):
         self.assertIn("action", result)
         self.assertIn("bet_size", result)
         self.assertIn(result["action"], ["fold", "call", "raise"])
+
+
+class TestSearchConsistency(unittest.TestCase):
+    """Cross-check A* search against brute-force optimization."""
+
+    def test_a_star_and_brute_force_agree_on_premium_hand(self):
+        """
+        For a premium hand, A* and brute-force search should return
+        very similar bet sizes and EVs.
+        """
+        from bet_sizing_search import optimal_bet_sizing_search
+
+        common_kwargs = {
+            "hand": "AA",
+            "position": "Button",
+            "stack_sizes": (50, 50),
+            "opponent_tendency": "Tight",
+            "use_module1": False,  # Do not depend on Module 1 in unit tests
+        }
+        result_a_star = optimal_bet_sizing_search(
+            search_algorithm="a_star",
+            **common_kwargs,
+        )
+        result_brute = optimal_bet_sizing_search(
+            search_algorithm="brute_force",
+            **common_kwargs,
+        )
+
+        # Both methods should recommend the same action type
+        self.assertEqual(result_a_star["action"], result_brute["action"])
+
+        # Bet sizes and EVs should be very close
+        self.assertAlmostEqual(
+            result_a_star["bet_size"],
+            result_brute["bet_size"],
+            places=2,
+        )
+        self.assertAlmostEqual(
+            result_a_star["expected_value"],
+            result_brute["expected_value"],
+            places=4,
+        )
+
+    def test_optimal_bet_sizing_search_basic_api(self):
+        """Smoke-test the unified entry point without Module 1."""
+        from bet_sizing_search import optimal_bet_sizing_search
+
+        result = optimal_bet_sizing_search(
+            hand="KAs",
+            position="Button",
+            stack_sizes=(50, 50),
+            opponent_tendency="Loose",
+            search_algorithm="a_star",
+            use_module1=False,
+        )
+        self.assertIn("action", result)
+        self.assertIn("bet_size", result)
+        self.assertIn("expected_value", result)
+        self.assertIn("search_algorithm", result)
 
 
 class TestEdgeCases(unittest.TestCase):

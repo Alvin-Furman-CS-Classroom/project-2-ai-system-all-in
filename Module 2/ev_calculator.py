@@ -3,13 +3,18 @@ Expected Value (EV) calculation for poker bet sizing.
 Calculates the expected value of a bet size given hand, position, stack sizes, and opponent tendency.
 """
 
+import logging
 import sys
 from pathlib import Path
 from typing import Tuple, Optional
 import re
 
-# Add parent directory to path to access docs
-sys.path.insert(0, str(Path(__file__).parent.parent))
+# Add parent directory to path to access docs (guard against duplicates)
+_project_root = str(Path(__file__).parent.parent)
+if _project_root not in sys.path:
+    sys.path.insert(0, _project_root)
+
+logger = logging.getLogger(__name__)
 
 # Opponent tendency probability tables
 # Probabilities of opponent actions (fold, call, raise) given our bet size
@@ -124,13 +129,16 @@ def load_hand_equity() -> dict[str, float]:
                 equity_dict[hand] = win_pct / 100.0  # Convert to 0.0-1.0
         
     except FileNotFoundError:
-        print(f"Warning: Could not find {docs_path}. Using empty equity dictionary.")
+        logger.warning(
+            "Could not find hand equity file %s. Using empty equity dictionary.",
+            docs_path,
+        )
     
     return equity_dict
 
 
-# Load hand equity data once at module import
-HAND_EQUITY = load_hand_equity()
+# Hand equity table (loaded lazily for better import-time hygiene)
+HAND_EQUITY: dict[str, float] = {}
 
 
 def normalize_hand(hand: str) -> Optional[str]:
@@ -196,6 +204,11 @@ def get_hand_equity(hand: str) -> float:
     Returns:
         Equity as float (0.0 to 1.0), or 0.5 if hand not found (default to coin flip).
     """
+    global HAND_EQUITY
+    # Lazy-load equity data on first use to avoid heavy work at import time.
+    if not HAND_EQUITY:
+        HAND_EQUITY = load_hand_equity()
+    
     normalized = normalize_hand(hand)
     if normalized and normalized in HAND_EQUITY:
         return HAND_EQUITY[normalized]
@@ -238,26 +251,15 @@ def calculate_ev(
     Returns:
         Expected value in big blinds.
     """
-    your_stack, opponent_stack = stack_sizes
+    # Determine our investment and updated pot size for this scenario
+    our_investment, pot_size = _get_investment_and_pot_size(
+        bet_size=bet_size,
+        stack_sizes=stack_sizes,
+        pot_size=pot_size,
+        opponent_bet_size=opponent_bet_size,
+        action=action,
+    )
     
-    # Handle facing a bet scenario
-    if opponent_bet_size is not None:
-        if action == "call":
-            # Calling: we match opponent's bet
-            our_investment = opponent_bet_size
-            pot_size = pot_size + opponent_bet_size  # Opponent's bet is already in pot
-        elif action == "raise":
-            # Raising: bet_size is our total raise size
-            our_investment = bet_size
-            pot_size = pot_size + opponent_bet_size  # Opponent's bet is already in pot
-        else:
-            raise ValueError(f"Invalid action '{action}' when facing a bet. Use 'call' or 'raise'.")
-    else:
-        # Opening action: bet_size is our raise
-        our_investment = bet_size
-    
-    # Cap investment at available stack
-    our_investment = min(our_investment, your_stack)
     if our_investment <= 0:
         return 0.0
     
@@ -301,6 +303,45 @@ def calculate_ev(
     total_ev = ev_fold + ev_call + ev_raise
     
     return total_ev
+
+
+def _get_investment_and_pot_size(
+    bet_size: float,
+    stack_sizes: Tuple[int, int],
+    pot_size: float,
+    opponent_bet_size: Optional[float],
+    action: str,
+) -> Tuple[float, float]:
+    """
+    Compute our investment and the updated pot size for a given scenario.
+    
+    This helper isolates the scenario branching logic (opening vs. facing a bet)
+    from the main EV formula for clarity and easier testing.
+    """
+    your_stack, _ = stack_sizes
+    
+    # Handle facing a bet scenario
+    if opponent_bet_size is not None:
+        if action == "call":
+            # Calling: we match opponent's bet
+            our_investment = opponent_bet_size
+            updated_pot_size = pot_size + opponent_bet_size  # Opponent's bet is already in pot
+        elif action == "raise":
+            # Raising: bet_size is our total raise size
+            our_investment = bet_size
+            updated_pot_size = pot_size + opponent_bet_size  # Opponent's bet is already in pot
+        else:
+            raise ValueError(
+                f"Invalid action '{action}' when facing a bet. Use 'call' or 'raise'."
+            )
+    else:
+        # Opening action: bet_size is our raise
+        our_investment = bet_size
+        updated_pot_size = pot_size
+    
+    # Cap investment at available stack
+    our_investment = min(our_investment, your_stack)
+    return our_investment, updated_pot_size
 
 
 def calculate_ev_for_bet_sizes(

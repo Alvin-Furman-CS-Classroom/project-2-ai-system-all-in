@@ -1,6 +1,6 @@
 ## Project Context
 
-- System title: # Heads-Up Pre-Flop Poker Strategy Analyzer
+- System title: # Heads-Up Pre-Flop Poker: Comparative Analysis of AI Agent Strategies
 - Theme: Poker
 - Project Plan:
 
@@ -9,9 +9,16 @@
 
 ## System Overview
 
-This system provides strategic analysis for heads-up (two-player) Texas Hold'em pre-flop play, helping players make optimal decisions based on starting hands, position, stack sizes, and opponent tendencies. The system integrates multiple AI techniques to deliver actionable insights: propositional logic encodes fundamental poker rules and constraints; search algorithms optimize bet sizing for specific hands; advanced optimization determines optimal opening ranges; game theory computes Nash equilibrium baseline strategies; and reinforcement learning adapts to exploit specific opponent types.
+This system provides a comprehensive platform for playing heads-up (two-player) Texas Hold'em pre-flop poker against AI agents, each implementing different AI techniques. The system integrates multiple AI paradigms to create four distinct agents: a rule-based agent using propositional logic and A* search; a Monte Carlo simulation agent; a game theory optimal (GTO) agent using Nash equilibrium; and an adaptive learning agent using reinforcement learning. Users can compete against any agent, and the system enables agent-versus-agent competitions to quantitatively compare the effectiveness of different AI approaches.
 
-Poker is an ideal domain for exploring AI concepts because it combines incomplete information, strategic decision-making, and optimization challenges. The pre-flop phase provides a manageable scope while still requiring sophisticated analysis. Each module builds upon previous work: rules establish the foundation, search finds optimal actions, game theory provides theoretical baselines, and reinforcement learning enables adaptive exploitation. This progression demonstrates how different AI paradigms complement each other in a unified system, making it both educationally valuable and practically useful for poker players seeking to improve their strategic understanding.
+Poker is an ideal domain for exploring AI concepts because it combines incomplete information, strategic decision-making, and optimization challenges. The pre-flop phase provides a manageable scope while still requiring sophisticated analysis. By implementing each AI technique as a playable agent and enabling direct comparison, this system demonstrates how different AI paradigms perform in practice, revealing trade-offs between speed and accuracy, exploitation and unexploitability, and rule-based versus learning-based approaches. This comparative analysis makes the system both educationally valuable and practically useful for understanding AI strategy optimization.
+
+### Agents
+
+- **Agent 1 – Rule-Based + Search**: Uses Module 1 (Propositional Logic) to determine playability and Module 2 (A* Search) to find optimal bet sizes.
+- **Agent 2 – Monte Carlo**: Uses Module 3 to compute optimal opening actions via Monte Carlo simulation (no heuristics or closed-form EV).
+- **Agent 3 – GTO (Nash Equilibrium)**: Uses Module 4 to follow pre-flop Nash equilibrium strategies.
+- **Agent 4 – Adaptive Learning**: Uses Module 5 (Reinforcement Learning) to learn and exploit opponent tendencies over time.
 
 ## Modules
 
@@ -43,17 +50,17 @@ Poker is an ideal domain for exploring AI concepts because it combines incomplet
 
 ---
 
-### Module 3: Opening Range Optimization
+### Module 3: Monte Carlo Optimal Opening Actions
 
-**Topics:** Advanced Search (Hill Climbing, Simulated Annealing, Genetic Algorithms), Optimization
+**Topics:** Monte Carlo Methods, Optimization
 
-**Input:** Position (Button/Big Blind), stack sizes (tuple), opponent tendency category (string), knowledge base from Module 1, bet sizing recommendations from Module 2 (dictionary mapping hands to optimal bet sizes).
+**Input:** Position (Button/Big Blind), stack sizes (tuple), opponent tendency category (string), optional knowledge base from Module 1 (for playability filtering). This module operates independently of Module 2; optimal opening actions are derived purely from Monte Carlo simulation without using heuristics or closed-form EV formulas.
 
-**Output:** Optimal opening range as a percentage of starting hands (float, e.g., 0.40 for "top 40% of hands") and a list of specific hands to play from that position (list of hand strings, e.g., ["AA", "AKs", "AKo", "AQs", ...]). Output includes expected value of the overall range strategy.
+**Output:** Optimal opening action strategy (e.g., fold or open to X BB per hand or range), computed by simulation rather than heuristics or closed-form EV. Output includes expected value of the strategy and confidence intervals from simulation. May include a list of hands and their recommended opening actions (fold or bet size).
 
-**Integration:** This module optimizes which hands to include in an opening range, using Module 2's bet sizing recommendations to evaluate range profitability. The optimized ranges provide strategic context for Module 4's game theory analysis (comparing constructed ranges to Nash equilibrium) and inform Module 5's reinforcement learning (establishing baseline ranges to adapt from).
+**Integration:** This module uses Monte Carlo simulation to compute optimal opening actions directly: it simulates many outcomes (e.g., opponent responses, hand runouts) and chooses actions that maximize simulated value. It does not use Module 2's heuristics or EV formulas. The resulting strategy provides an alternative approach to bet sizing that complements the search-based method.
 
-**Prerequisites:** Course content on Advanced Search algorithms (Hill Climbing, Simulated Annealing, Genetic Algorithms) and optimization techniques. Modules 1 and 2 for rule constraints and bet sizing data.
+**Prerequisites:** Course content on Monte Carlo methods and optimization. Module 1 (optional) for rule constraints or playability filtering.
 
 ---
 
@@ -98,11 +105,11 @@ _A timeline showing that each module's prerequisites align with the course sched
 
 ## Coverage Rationale
 
-This topic selection fits poker strategy analysis naturally. **Propositional Logic** encodes fundamental decision rules (position-based constraints, hand strength relationships) that establish the knowledge foundation. **Search algorithms** (A*, IDA*, Beam Search) are essential for finding optimal bet sizes by exploring action spaces efficiently, while **Advanced Search/Optimization** (Hill Climbing, Simulated Annealing, Genetic Algorithms) optimizes complex strategy spaces (opening ranges) where exhaustive search is infeasible. **Game Theory** provides theoretical baselines through Nash equilibrium analysis and comparison, which is central to evaluating optimal poker strategy. **Reinforcement Learning** enables adaptive learning from opponent behavior, a critical capability for exploiting weaknesses.
+This topic selection fits poker strategy analysis naturally. **Propositional Logic** encodes fundamental decision rules (position-based constraints, hand strength relationships) that establish the knowledge foundation. **Search algorithms** (A*, IDA*, Beam Search) are essential for finding optimal bet sizes by exploring action spaces efficiently. **Monte Carlo Methods** provide a simulation-based approach to optimization, computing optimal opening actions through sampling rather than heuristics or closed-form EV formulas. **Game Theory** provides theoretical baselines through Nash equilibrium analysis and comparison, which is central to evaluating optimal poker strategy. **Reinforcement Learning** enables adaptive learning from opponent behavior, a critical capability for exploiting weaknesses.
 
-The progression from rules → search → optimization → game theory → learning demonstrates how different AI paradigms complement each other. Each topic addresses a distinct aspect: logic provides structure, search finds solutions, optimization refines strategies, game theory establishes baselines, and RL enables adaptation.
+The progression from rules → search → simulation → game theory → learning demonstrates how different AI paradigms complement each other. Each topic addresses a distinct aspect: logic provides structure, search finds solutions, simulation estimates values, game theory establishes baselines, and RL enables adaptation.
 
-Trade-offs considered: Supervised Learning could predict opponent actions but was omitted to focus on strategic optimization. First-Order Logic could encode more complex relationships but Propositional Logic suffices for pre-flop rules. For Game Theory, computing Nash equilibrium from scratch would be computationally intensive; instead, the system references known equilibrium solutions and focuses on comparative analysis, which demonstrates game theory concepts while remaining feasible. The focus on pre-flop (rather than full game trees) makes the system feasible while still demonstrating all required concepts effectively.
+Trade-offs considered: Supervised Learning could predict opponent actions but was omitted to focus on strategic optimization. First-Order Logic could encode more complex relationships but Propositional Logic suffices for pre-flop rules. For Game Theory, computing Nash equilibrium from scratch would be computationally intensive; instead, the system references known equilibrium solutions and focuses on comparative analysis, which demonstrates game theory concepts while remaining feasible. The focus on pre-flop (rather than full game trees) makes the system feasible while still demonstrating all required concepts effectively. Organizing modules as agents and comparing them adds minimal complexity while providing significant educational and research value.
 
 ## Constraints
 

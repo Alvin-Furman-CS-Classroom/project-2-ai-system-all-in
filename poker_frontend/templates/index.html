@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Poker Game</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <!-- Game Board (starts immediately) -->
+    <div id="game_board">
+        <h1>🎴 Play Against AI Poker Agent</h1>
+        
+        <!-- Poker Table -->
+        <div class="table">
+            <!-- AI Player (Top) -->
+            <div class="player ai">
+                <div class="name">AI Agent</div>
+                <div class="position" id="ai_position">-</div>
+                <div class="hand" id="ai_hand">??</div>
+                <div class="stack">Stack: <span id="ai_stack_display">50</span> BB</div>
+                <div class="bet">Bet: <span id="ai_invested_display">0</span> BB</div>
+            </div>
+
+            <!-- Pot -->
+            <div class="pot">
+                <div class="pot-label">Pot</div>
+                <div class="pot-value"><span id="pot_display">1.5</span> BB</div>
+            </div>
+
+            <!-- Human Player (Bottom) -->
+            <div class="player human">
+                <div class="name">You</div>
+                <div class="position" id="player_position">-</div>
+                <div class="hand" id="player_hand">-</div>
+                <div class="stack">Stack: <span id="player_stack_display">50</span> BB</div>
+                <div class="bet">Bet: <span id="player_invested_display">0</span> BB</div>
+            </div>
+        </div>
+
+        <!-- Game Info -->
+        <div class="game-info">
+            <div class="info-item">
+                <span class="label">Current Bet:</span>
+                <span id="current_bet_display" class="value">0</span> BB
+            </div>
+        </div>
+
+        <!-- Action Buttons -->
+        <div class="actions">
+            <button id="fold" class="btn btn-danger">Fold</button>
+            <button id="call" class="btn btn-warning">Call</button>
+            <div class="raise-group">
+                <label for="raise_size">Raise to:</label>
+                <input type="number" id="raise_size" value="3.0" min="2.0" max="50" step="0.5">
+                <span>BB</span>
+                <button id="raise" class="btn btn-success">Raise</button>
+            </div>
+        </div>
+
+        <!-- AI Decision Display -->
+        <div id="ai_decision" class="hidden">
+            <h3>AI Decision</h3>
+            <div id="ai_action_text"></div>
+        </div>
+
+        <!-- Game Status -->
+        <div id="status" class="status hidden"></div>
+
+        <!-- New Hand Button -->
+        <button id="new_hand" class="btn btn-secondary hidden">New Hand</button>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/api.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/cards.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/game.js') }}"></script>
+</body>
+</html>

@@ -3,20 +3,25 @@ Bet sizing search: Optimization and A*.
 Uses A* and brute-force optimization to find optimal bet sizes that maximize expected value.
 """
 
-from typing import Tuple, Optional, List, Dict, Set, Any
+from typing import Tuple, Optional, List, Dict, Any
 from dataclasses import dataclass
 from heapq import heappush, heappop
+import logging
 import sys
 import importlib.util
 from pathlib import Path
 
-# Import dependencies
-sys.path.insert(0, str(Path(__file__).parent))
+# Import dependencies (guard against duplicate path entries)
+_module2_dir = str(Path(__file__).parent)
+if _module2_dir not in sys.path:
+    sys.path.insert(0, _module2_dir)
 from ev_calculator import calculate_ev, calculate_ev_call, calculate_ev_fold
 from bet_size_discretization import (
     get_bet_sizes_for_scenario, get_action_type, is_all_in
 )
 from heuristic import heuristic_hand_strength_based, get_heuristic
+
+logger = logging.getLogger(__name__)
 
 # Optional Module 1 integration: load propositional_logic_hand_decider if Module 1 exists
 _propositional_logic_hand_decider: Optional[Any] = None
@@ -28,8 +33,10 @@ if _module_1_path.exists():
         if _spec and _spec.loader:
             _spec.loader.exec_module(_mod)
             _propositional_logic_hand_decider = getattr(_mod, "propositional_logic_hand_decider", None)
-    except Exception:
-        pass
+    except (ImportError, OSError, AttributeError) as exc:
+        # If Module 1 cannot be loaded, we gracefully degrade by skipping
+        # the optional playability filter instead of failing the entire module.
+        logger.warning("Failed to load Module 1 for bet sizing search: %s", exc)
 
 
 @dataclass
@@ -95,13 +102,18 @@ def a_star_search(
             "bet_size": 0.0,
             "ev": 0.0,
             "search_method": "a_star",
-            "nodes_explored": 0
+            "nodes_explored": 0,
         }
     
     # Get heuristic estimate once (h(n) is same for all nodes in this problem)
     h_score = get_heuristic(
-        hand, position, stack_sizes, opponent_tendency,
-        opponent_bet_size, pot_size, heuristic_type
+        hand,
+        position,
+        stack_sizes,
+        opponent_tendency,
+        opponent_bet_size,
+        pot_size,
+        heuristic_type,
     )
     
     # Evaluate fold option
@@ -110,45 +122,26 @@ def a_star_search(
         bet_size=0.0,
         ev=fold_ev,
         f_score=fold_ev + h_score,
-        action="fold"
+        action="fold",
     )
     
     # Priority queue: nodes ordered by f_score (highest first for maximizing)
-    open_set = []
+    open_set: List[SearchNode] = []
     
     # Add all bet sizes to open set with their f_scores
     for bet_size in bet_sizes:
-        # Determine action type
-        if opponent_bet_size is None:
-            action = "open"
-        else:
-            action = get_action_type(bet_size, opponent_bet_size, your_stack)
-            if action == "fold":
-                continue  # Skip invalid
-        
-        # Calculate actual EV (g(n))
-        if action == "call":
-            g_score = calculate_ev_call(
-                hand, position, stack_sizes, opponent_tendency,
-                opponent_bet_size, pot_size
-            )
-        else:  # raise or open
-            g_score = calculate_ev(
-                bet_size, hand, position, stack_sizes, opponent_tendency,
-                pot_size, opponent_bet_size, action
-            )
-        
-        # f(n) = g(n) + h(n)
-        f_score = g_score + h_score
-        
-        node = SearchNode(
+        node = _create_search_node_for_bet_size(
             bet_size=bet_size,
-            ev=g_score,
-            f_score=f_score,
-            action=action
+            hand=hand,
+            position=position,
+            stack_sizes=stack_sizes,
+            opponent_tendency=opponent_tendency,
+            opponent_bet_size=opponent_bet_size,
+            pot_size=pot_size,
+            h_score=h_score,
         )
-        
-        heappush(open_set, node)
+        if node is not None:
+            heappush(open_set, node)
     
     # A* exploration: process nodes in order of f_score
     nodes_explored = 0
@@ -161,10 +154,9 @@ def a_star_search(
         if current.ev > best_node.ev:
             best_node = current
         
-        # Early termination: if current f_score < best EV, no better solutions exist
-        # (since f_score = g(n) + h(n) and h(n) estimates max, if f < best_g, then
-        # all remaining nodes have g(n) + h(n) < best_g, so g(n) < best_g)
-        if current.f_score < best_node.ev:
+        # Early termination: if current node cannot beat the best EV even
+        # under the optimistic heuristic, no remaining nodes can either.
+        if _should_terminate_search(current, best_node):
             break
     
     # Determine final action
@@ -184,6 +176,73 @@ def a_star_search(
         "search_method": "a_star",
         "nodes_explored": nodes_explored
     }
+
+
+def _create_search_node_for_bet_size(
+    bet_size: float,
+    hand: str,
+    position: str,
+    stack_sizes: Tuple[int, int],
+    opponent_tendency: str,
+    opponent_bet_size: Optional[float],
+    pot_size: float,
+    h_score: float,
+) -> Optional[SearchNode]:
+    """
+    Create a SearchNode for a given bet size, or return None if the bet size
+    corresponds to an invalid action in this scenario.
+    """
+    your_stack, _ = stack_sizes
+    
+    # Determine action type
+    if opponent_bet_size is None:
+        action = "open"
+    else:
+        action = get_action_type(bet_size, opponent_bet_size, your_stack)
+        if action == "fold":
+            return None  # Skip invalid or dominated sizes
+    
+    # Calculate actual EV (g(n))
+    if action == "call":
+        g_score = calculate_ev_call(
+            hand,
+            position,
+            stack_sizes,
+            opponent_tendency,
+            opponent_bet_size,
+            pot_size,
+        )
+    else:  # raise or open
+        g_score = calculate_ev(
+            bet_size,
+            hand,
+            position,
+            stack_sizes,
+            opponent_tendency,
+            pot_size,
+            opponent_bet_size,
+            action,
+        )
+    
+    # f(n) = g(n) + h(n)
+    f_score = g_score + h_score
+    
+    return SearchNode(
+        bet_size=bet_size,
+        ev=g_score,
+        f_score=f_score,
+        action=action,
+    )
+
+
+def _should_terminate_search(current: SearchNode, best_node: SearchNode) -> bool:
+    """
+    Decide whether A* search can terminate early based on the heuristic bound.
+    
+    If the current node's f_score (g + h) is already below the best actual EV
+    found so far, no future node can improve on best_node.ev, so we can stop.
+    """
+    return current.f_score < best_node.ev
 
 
 def find_max_ev_bet_size(

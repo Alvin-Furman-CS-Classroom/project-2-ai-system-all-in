@@ -11,8 +11,11 @@ from typing import Tuple, Optional
 import sys
 from pathlib import Path
 
-# Import from same module
-sys.path.insert(0, str(Path(__file__).parent))
+# Import from same module (guard against duplicate path entries)
+_module2_dir = str(Path(__file__).parent)
+if _module2_dir not in sys.path:
+    sys.path.insert(0, _module2_dir)
+
 from ev_calculator import calculate_ev, get_hand_equity
 from bet_size_discretization import get_bet_sizes_for_scenario, is_all_in
 
@@ -26,27 +29,30 @@ def find_max_ev(
     pot_size: float = 1.5
 ) -> float:
     """
-    Optimization function: Find maximum EV by evaluating all bet sizes.
+    Optimization helper: compute the maximum EV achievable over all bet sizes.
     
-    NOTE: This is NOT a heuristic - it solves the optimization problem directly
-    by evaluating all possible bet sizes. Use this for:
-    - Finding the true optimal solution (for comparison/testing)
-    - As a baseline to compare search algorithm results
+    This is **not** a heuristic; it solves the optimization problem exactly by
+    evaluating every bet size in the discretized action space and returning only
+    the best EV value (not the corresponding bet size or action).
     
-    For use in search algorithms, use actual heuristics like:
+    Use cases:
+    - As a ground-truth baseline to compare search algorithm results.
+    - For experiments or unit tests that care only about the numeric optimum.
+    
+    For use inside search algorithms, prefer heuristics like:
     - heuristic_hand_strength_based() (fast, informative)
     - heuristic_optimistic_simple() (very fast, less accurate)
     
     Args:
-        hand: Starting hand notation
-        position: Position ("Button" or "Big Blind")
-        stack_sizes: Tuple of (your_stack, opponent_stack) in big blinds
-        opponent_tendency: Opponent tendency
-        opponent_bet_size: Opponent's bet size if facing a bet (None for opening)
-        pot_size: Current pot size
+        hand: Starting hand notation.
+        position: Position ("Button" or "Big Blind").
+        stack_sizes: Tuple of (your_stack, opponent_stack) in big blinds.
+        opponent_tendency: Opponent tendency.
+        opponent_bet_size: Opponent's bet size if facing a bet (None for opening).
+        pot_size: Current pot size.
     
     Returns:
-        Maximum EV found among all bet sizes.
+        Maximum EV (float) found among all bet sizes in this scenario.
     """
     your_stack, _ = stack_sizes
     
