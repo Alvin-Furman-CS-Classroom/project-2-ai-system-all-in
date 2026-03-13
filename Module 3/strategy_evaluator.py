@@ -6,7 +6,11 @@ opening action (fold or bet size). This module computes the value of the strateg
 and confidence intervals using simulation only—no Module 2 or EV formulas.
 """
 
-from typing import Dict, Tuple, Optional, List
+from __future__ import annotations
+
+from typing import Dict, Tuple, Optional
+
+from monte_carlo_simulator import run_simulation_for_strategy
 
 
 def evaluate_strategy(
@@ -20,27 +24,48 @@ def evaluate_strategy(
 ) -> Dict:
     """
     Evaluate a strategy (hand -> opening bet size; 0 or sentinel = fold) using
-    Monte Carlo simulation only. No Module 2 or heuristics.
+    Monte Carlo simulation.
 
     Args:
         strategy: Dict mapping hand notation to opening bet size in BB (0 = fold).
         position: "Button" or "Big Blind".
         stack_sizes: (your_stack, opponent_stack) in BB.
         opponent_tendency: Opponent tendency category.
-        num_trials: Number of trials per hand (or total, depending on design).
-        confidence_level: e.g. 0.95 for 95% CI.
+        num_trials: Number of trials per hand.
+        confidence_level: Currently unused (we always return a 95% CI).
         seed: Random seed.
 
     Returns:
         Dict with:
         - "expected_value": overall strategy value (from simulation).
         - "confidence_interval": (lower, upper) for strategy value.
-        - "per_hand_ev": optional dict hand -> value estimate.
-        - "strategy": the input strategy (or refined version).
+        - "per_hand_ev": dict hand -> value estimate.
+        - "per_hand_results": raw per-hand simulation results.
+        - "strategy": the input strategy.
     """
-    # TODO: Use monte_carlo_simulator to run simulations; aggregate value and CI.
-    # No Module 2 or EV formulas.
-    raise NotImplementedError("evaluate_strategy not yet implemented")
+    # We treat num_trials as the number of trials per hand.
+    sim_result = run_simulation_for_strategy(
+        strategy=strategy,
+        position=position,
+        stack_sizes=stack_sizes,
+        opponent_tendency=opponent_tendency,
+        num_trials_per_hand=num_trials,
+        hands=None,
+        seed=seed,
+    )
+
+    per_hand_ev = {
+        hand: res["value_estimate"]
+        for hand, res in sim_result["per_hand_results"].items()
+    }
+
+    return {
+        "expected_value": sim_result["expected_value"],
+        "confidence_interval": sim_result["confidence_interval"],
+        "per_hand_ev": per_hand_ev,
+        "per_hand_results": sim_result["per_hand_results"],
+        "strategy": strategy,
+    }
 
 
 def strategy_value_summary(
@@ -59,5 +84,26 @@ def strategy_value_summary(
         Dict with expected_value, confidence_interval, and optional
         list of (hand, action, value_estimate) for key hands.
     """
-    # TODO: Call evaluate_strategy and format for output.
-    raise NotImplementedError("strategy_value_summary not yet implemented")
+    result = evaluate_strategy(
+        strategy=strategy,
+        position=position,
+        stack_sizes=stack_sizes,
+        opponent_tendency=opponent_tendency,
+        num_trials=num_trials,
+        seed=seed,
+    )
+
+    summary_rows = [
+        {
+            "hand": hand,
+            "bet_size": strategy.get(hand, 0.0),
+            "value_estimate": ev,
+        }
+        for hand, ev in result["per_hand_ev"].items()
+    ]
+
+    return {
+        "expected_value": result["expected_value"],
+        "confidence_interval": result["confidence_interval"],
+        "hands": summary_rows,
+    }
