@@ -11,8 +11,9 @@ This module uses **Monte Carlo simulation only** to compute optimal opening acti
 - Position (Button / Big Blind)
 - Stack sizes (tuple)
 - Opponent tendency category
-- Optional: knowledge base or playability from Module 1 (for filtering which hands to consider)
 - Optional: list of hands (or hand range) to evaluate; if omitted, a default set can be used
+
+**Independence:** This module does **not** use Module 1 or Module 2. It is suitable as a standalone Monte Carlo agent that can compete against the rule-based + search agent (Modules 1–2) on equal footing—same inputs are game state and tendency, not another module’s output.
 
 ## Outputs
 
@@ -39,4 +40,3 @@ python3 "Module 3/demo_module3.py"
 ## Prerequisites
 
 - Course content on Monte Carlo methods and optimization.
-- Module 1 is optional (for playability filtering only).

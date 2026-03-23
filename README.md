@@ -31,7 +31,7 @@ Your system must include 5-6 modules. Fill in the table below as you plan each m
 | ------ | -------- | ------ | ------- | ---------- | ---------- |
 | 1 | Propositional Logic (Knowledge Bases, Inference Methods, Chaining, CNF) | Starting hand, position (Button/Big Blind), stack size (big blinds), opponent tendency category | Knowledge base of propositional logic rules in CNF format, playable decision | None | Wednesday, Feb 11 |
 | 2 | Informed Search (A*, IDA*, Beam Search), Optimization | Starting hand, position, stack sizes (tuple), opponent tendency, Module 1 knowledge base | Optimal bet size (multiple of big blind), action recommendation (fold/call/raise), expected value | Module 1 | Thursday, Feb 26 |
-| 3 | Monte Carlo Methods, Optimization | Position (Button/Big Blind), stack sizes (tuple), opponent tendency category, optional knowledge base from Module 1 | Optimal opening action strategy (fold or open to X BB) with expected value and confidence intervals | Module 1 (optional) | Thursday, March 19 |
+| 3 | Monte Carlo Methods, Optimization | Position (Button/Big Blind), stack sizes (tuple), opponent tendency category | Optimal opening action strategy (fold or open to X BB) with expected value and confidence intervals | None | Thursday, March 19 |
 | 4 | Game Theory (Minimax, Nash Equilibrium, Mixed Strategies) | Position, stack sizes, Modules 2-3 optimized strategies, Module 1 knowledge base | Deviation metrics, exploitability analysis, equilibrium reference data | Modules 1, 2, 3 | Thursday, April 2 |
 | 5 | Reinforcement Learning (MDP, Policy, Value Functions, Q-Learning) | Historical game data, opponent tendency, Module 4 equilibrium data, Module 3 opening ranges | Learned policy (Q-values), exploitation strategy recommendations | Modules 1, 3, 4 | Thursday, April 16 |
 
@@ -88,7 +88,8 @@ print(f"Reason: {result['reason']}")
 Commands for running modules:
 - Module 1: Use Python import as shown above, or run interactively
 - Module 2: `[command to be added]`
-- Module 3: `[command to be added]`
+- Module 3: `python3 "Module 3/demo_module3.py"`
+- **Preflop + showdown web demo** (human vs random bot): `pip install -r requirements.txt` then `python3 -m web_app.server` — open http://127.0.0.1:5000/ — your move returns immediately; the bot’s “thinking” delay is **client-side** in `web_app/templates/index.html` (`BOT_THINK_MIN_MS` / `BOT_THINK_MAX_MS`).
 - Module 4: `[command to be added]`
 - Module 5: `[command to be added]`
 

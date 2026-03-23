@@ -1,0 +1,731 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#0a0e14" />
+  <title>HU Preflop + Showdown</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
+</head>
+<body>
+  <div class="loading-overlay" id="loading" aria-hidden="true">
+    <div class="spinner" role="status" aria-label="Loading"></div>
+  </div>
+
+  <div class="wrap">
+    <header class="app-header">
+      <div class="agent-select-wrap">
+        <label for="agent-select">Opponent</label>
+        <select id="agent-select" aria-label="Choose bot opponent">
+          <option value="random">Random baseline</option>
+          <option value="m12">Agent 1 (logic + A*)</option>
+          <option value="m3" selected>Agent 2 (Monte Carlo)</option>
+        </select>
+      </div>
+      <h1>Heads-up: pre-flop only</h1>
+    </header>
+
+    <section class="panel" id="status">
+      <div class="status-strip">
+        <span class="turn-pill" id="turn-pill" aria-live="polite">
+          <span class="dot" aria-hidden="true"></span>
+          <span id="turn-label">—</span>
+        </span>
+        <p id="msg" role="status"></p>
+      </div>
+
+      <div class="cards">
+        <div class="card-row player-strip" id="player-strip-0" data-seat="0">
+          <div class="player-strip-top">
+            <span class="label">You</span>
+            <span class="player-stack" id="player-stack-0" aria-label="Your stack"></span>
+          </div>
+          <div class="stack-track" id="stack-track-0" role="img" aria-label="Stack vs committed chips">
+            <span class="stack-track-behind"></span>
+            <span class="stack-track-pot"></span>
+          </div>
+          <div class="player-strip-cards">
+            <div class="bet-pill" id="bet-pill-0" hidden>
+              <span class="bet-pill-chips" id="bet-chips-0"></span>
+            </div>
+            <span id="hole0" class="hole" aria-label="Your hole cards"></span>
+          </div>
+        </div>
+        <div class="pot-between-row">
+          <div class="pot-badge" id="pot-badge">Pot: <span id="pot-val">0</span></div>
+        </div>
+        <div class="card-row player-strip player-strip-bot" id="player-strip-1" data-seat="1">
+          <div class="player-strip-top">
+            <span class="label">Bot</span>
+            <span class="player-stack" id="player-stack-1" aria-label="Bot stack"></span>
+          </div>
+          <p class="bot-last-move" id="bot-last-move" hidden></p>
+          <div class="stack-track" id="stack-track-1" role="img" aria-label="Stack vs committed chips">
+            <span class="stack-track-behind"></span>
+            <span class="stack-track-pot"></span>
+          </div>
+          <div class="player-strip-cards">
+            <div class="bet-pill bet-pill-bot" id="bet-pill-1" hidden>
+              <span class="bet-pill-chips" id="bet-chips-1"></span>
+            </div>
+            <span id="hole1" class="hole" aria-label="Bot hole cards"></span>
+          </div>
+        </div>
+        <div class="card-row board-row">
+          <span class="label">Board</span>
+          <span id="board" class="board" aria-label="Community cards"></span>
+        </div>
+      </div>
+
+      <p id="result" class="result" hidden></p>
+    </section>
+
+    <section class="panel actions" id="actions" hidden>
+      <h2>Your action</h2>
+      <div class="btn-row" id="btn-row"></div>
+      <div class="raise-panel" id="raise-panel" hidden>
+        <div class="raise-header">
+          <span class="raise-title">Raise</span>
+          <span class="raise-readout" id="raise-readout"></span>
+        </div>
+        <input type="range" id="raise-slider" class="raise-slider" />
+        <button type="button" class="raise-commit" id="raise-commit">Raise</button>
+      </div>
+    </section>
+
+    <section class="panel new-hand-wrap" id="new-hand-wrap" hidden>
+      <button type="button" class="primary" id="new-hand">New hand</button>
+    </section>
+  </div>
+  <script>
+    /** Deck of Cards API static PNGs (rank + suit, e.g. AH.png, 0H.png for ten). */
+    const CARD_IMG_BASE = "https://deckofcardsapi.com/static/img/";
+    const CARD_BACK_SRC = "{{ url_for('static', filename='card_back.svg') }}";
+
+    const msg = document.getElementById("msg");
+    const actionsEl = document.getElementById("actions");
+    const btnRow = document.getElementById("btn-row");
+    const result = document.getElementById("result");
+    const loading = document.getElementById("loading");
+    const potBadge = document.getElementById("pot-badge");
+    const potVal = document.getElementById("pot-val");
+    const turnLabel = document.getElementById("turn-label");
+    const raisePanel = document.getElementById("raise-panel");
+    const raiseSlider = document.getElementById("raise-slider");
+    const raiseReadout = document.getElementById("raise-readout");
+    const raiseCommit = document.getElementById("raise-commit");
+    const newHandWrap = document.getElementById("new-hand-wrap");
+    const agentSelect = document.getElementById("agent-select");
+    const BOT_AGENT_IDS = ["random", "m12", "m3"];
+
+    function syncAgentSelect(botAgent) {
+      if (!agentSelect || !botAgent) return;
+      if (BOT_AGENT_IDS.indexOf(botAgent) !== -1) {
+        agentSelect.value = botAgent;
+      }
+    }
+
+    function setNewHandWrapVisible(visible) {
+      newHandWrap.hidden = !visible;
+    }
+
+    let lastPot = null;
+    /** Detect preflop → showdown to stagger community card reveals. */
+    let prevPhaseForBoard = null;
+    /** Pause before flop; then gaps: 0.5s after 1st & 2nd card, 1.5s after 3rd & 4th. */
+    const BOARD_REVEAL_BEFORE_FIRST_MS = 1000;
+    const BOARD_REVEAL_GAP_MS = 500;
+    const BOARD_REVEAL_SLOW_GAP_MS = 1500;
+    let boardRevealTimeouts = [];
+    let handOverUiTimeoutId = null;
+    /** Last preflop stacks, contributions, and pot — used to freeze HUD during board runout. */
+    let lastPreflopUiSnapshot = null;
+
+    function boardRevealCompleteMs() {
+      return (
+        BOARD_REVEAL_BEFORE_FIRST_MS +
+        BOARD_REVEAL_GAP_MS +
+        BOARD_REVEAL_GAP_MS +
+        BOARD_REVEAL_SLOW_GAP_MS +
+        BOARD_REVEAL_SLOW_GAP_MS
+      );
+    }
+
+    function clearHandOverUiTimeout() {
+      if (handOverUiTimeoutId !== null) {
+        clearTimeout(handOverUiTimeoutId);
+        handOverUiTimeoutId = null;
+      }
+    }
+
+    function clearBoardRevealTimers() {
+      boardRevealTimeouts.forEach(function (id) {
+        clearTimeout(id);
+      });
+      boardRevealTimeouts = [];
+    }
+
+    function renderBoardArea(s, staggerShowdown) {
+      clearBoardRevealTimers();
+      const boardEl = document.getElementById("board");
+      if (!s.board || s.board.length === 0) {
+        boardEl.replaceChildren(cardElement("—"));
+        return;
+      }
+      if (staggerShowdown && s.board.length === 5) {
+        boardEl.replaceChildren();
+        let t = BOARD_REVEAL_BEFORE_FIRST_MS;
+        s.board.forEach(function (code, i) {
+          const id = setTimeout(function () {
+            boardEl.appendChild(cardElement(code, i));
+          }, t);
+          boardRevealTimeouts.push(id);
+          if (i < 4) {
+            t += i < 2 ? BOARD_REVEAL_GAP_MS : BOARD_REVEAL_SLOW_GAP_MS;
+          }
+        });
+        return;
+      }
+      boardEl.replaceChildren(...s.board.map((c, i) => cardElement(c, i)));
+    }
+
+    function applyFinalHandOverUi(s) {
+      turnLabel.textContent = "Complete";
+      msg.textContent = "";
+      setNewHandWrapVisible(true);
+      const potStr = String(s.pot);
+      potVal.textContent = potStr;
+      if (lastPot !== null && lastPot !== potStr && s.pot > 0) {
+        potBadge.classList.remove("pot-updated");
+        void potBadge.offsetWidth;
+        potBadge.classList.add("pot-updated");
+      }
+      lastPot = potStr;
+      renderPlayerHud(s);
+      document.getElementById("hole0").replaceChildren(...s.hole_cards[0].map((c, i) => cardElement(c, i)));
+      document.getElementById("hole1").replaceChildren(...s.hole_cards[1].map((c, i) => cardElement(c, i)));
+      result.hidden = false;
+      result.classList.remove("win-you", "win-bot", "chop");
+      if (s.winner === -1) {
+        result.textContent = "Chop — split pot.";
+        result.classList.add("chop");
+      } else if (s.winner === 0) {
+        result.textContent = "You win the pot.";
+        result.classList.add("win-you");
+      } else {
+        result.textContent = "Bot wins the pot.";
+        result.classList.add("win-bot");
+      }
+      renderButtons(s.legal_actions || [], s);
+    }
+
+    /** Bot "thinking" delay is only on the client — tune here (ms). */
+    const BOT_THINK_MIN_MS = 1200;
+    const BOT_THINK_MAX_MS = 2800;
+    /** If the bot is still to act after this, we retry advance (covers failed requests / tab throttle). */
+    const BOT_STUCK_RECOVER_MS = 9000;
+    const ADVANCE_RETRY = 3;
+    const FETCH_OPTS = { credentials: "same-origin" };
+
+    agentSelect.addEventListener("change", async function () {
+      const agent = agentSelect.value;
+      try {
+        const r = await fetch("/api/set_agent", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ agent: agent }),
+          ...FETCH_OPTS,
+        });
+        const data = await r.json();
+        if (r.ok && data.bot_agent) syncAgentSelect(data.bot_agent);
+      } catch (e) {
+        msg.textContent = "Could not update opponent. Try again.";
+      }
+    });
+
+    let botThinkTimer = null;
+    let botWatchdogTimer = null;
+
+    function clearBotSchedule() {
+      if (botThinkTimer) {
+        clearTimeout(botThinkTimer);
+        botThinkTimer = null;
+      }
+      if (botWatchdogTimer) {
+        clearTimeout(botWatchdogTimer);
+        botWatchdogTimer = null;
+      }
+    }
+
+    function scheduleBotIfNeeded(s) {
+      clearBotSchedule();
+      if (!s || s.phase !== "preflop" || s.actor !== 1) return;
+      const ms = BOT_THINK_MIN_MS + Math.random() * (BOT_THINK_MAX_MS - BOT_THINK_MIN_MS);
+      botThinkTimer = setTimeout(() => {
+        botThinkTimer = null;
+        advanceBot(0);
+      }, ms);
+      botWatchdogTimer = setTimeout(() => {
+        botWatchdogTimer = null;
+        recoverIfBotStuck();
+      }, BOT_STUCK_RECOVER_MS);
+    }
+
+    async function recoverIfBotStuck() {
+      try {
+        const r = await fetch("/api/state", { ...FETCH_OPTS });
+        const data = await r.json();
+        if (data.needs_new_hand) return;
+        const s = data.state;
+        if (s.phase === "preflop" && s.actor === 1) {
+          await advanceBot(0);
+        }
+      } catch (e) {
+        msg.textContent = "Could not reach server. Try “New hand” or refresh the page.";
+      }
+    }
+
+    async function advanceBot(attempt) {
+      if (attempt === undefined) attempt = 0;
+      try {
+        const r = await fetch("/api/advance_bot", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: "{}",
+          ...FETCH_OPTS,
+        });
+        let data;
+        try {
+          data = await r.json();
+        } catch (e) {
+          data = {};
+        }
+        if (r.status === 400 && data.error === "No hand") {
+          msg.textContent =
+            "Session expired (e.g. server restarted). Click “New hand” to continue.";
+          clearBotSchedule();
+          return;
+        }
+        if (!r.ok) {
+          if (attempt < ADVANCE_RETRY) {
+            setTimeout(() => advanceBot(attempt + 1), 400 + attempt * 300);
+            return;
+          }
+          msg.textContent = data.error || "Bot could not act. Try “New hand”.";
+          return;
+        }
+        renderStatePayload({ state: data.state });
+        if (data.state && data.state.phase === "preflop" && data.state.actor === 1) {
+          scheduleBotIfNeeded(data.state);
+        }
+      } catch (e) {
+        if (attempt < ADVANCE_RETRY) {
+          setTimeout(() => advanceBot(attempt + 1), 400 + attempt * 300);
+          return;
+        }
+        msg.textContent = "Network error. Check connection or click “New hand”.";
+      }
+    }
+
+    function setBusy(on) {
+      document.body.classList.toggle("is-busy", on);
+      loading.classList.toggle("visible", on);
+      loading.setAttribute("aria-hidden", on ? "false" : "true");
+      document.getElementById("new-hand").disabled = on;
+    }
+
+    function setBodyTurn(s) {
+      document.body.classList.remove("is-your-turn", "is-bot-turn");
+      if (!s || s.phase !== "preflop") return;
+      if (s.actor === 0) document.body.classList.add("is-your-turn");
+      else if (s.actor === 1) document.body.classList.add("is-bot-turn");
+    }
+
+    function cardFaceUrl(code) {
+      if (!code || code === "—" || code === "??") return null;
+      let r = code[0];
+      const su = (code[1] || "").toLowerCase();
+      const suitMap = { c: "C", d: "D", h: "H", s: "S" };
+      const s = suitMap[su];
+      if (!s) return null;
+      if (r === "T") r = "0";
+      return CARD_IMG_BASE + r + s + ".png";
+    }
+
+    function cardElement(code, index) {
+      if (code === "—") {
+        const el = document.createElement("span");
+        el.className = "card card-placeholder";
+        el.textContent = "—";
+        return el;
+      }
+      if (code === "??") {
+        const img = document.createElement("img");
+        img.className = "card-img";
+        img.src = CARD_BACK_SRC;
+        img.alt = "Hidden card";
+        img.loading = "eager";
+        img.decoding = "async";
+        return img;
+      }
+      const url = cardFaceUrl(code);
+      if (!url) {
+        const el = document.createElement("span");
+        el.className = "card";
+        el.textContent = code;
+        return el;
+      }
+      const wrap = document.createElement("span");
+      wrap.className = "card-wrap";
+      const img = document.createElement("img");
+      img.className = "card-img";
+      img.src = url;
+      img.alt = code;
+      img.loading = "eager";
+      img.decoding = "async";
+      img.onerror = function () {
+        wrap.replaceChildren();
+        const fallback = document.createElement("span");
+        fallback.className = "card";
+        fallback.textContent = code;
+        wrap.appendChild(fallback);
+      };
+      wrap.appendChild(img);
+      return wrap;
+    }
+
+    function labelAction(a) {
+      if (a.kind === "fold") return "Fold";
+      if (a.kind === "call") return "Call (" + a.amount + ")";
+      if (a.kind === "check") return "Check";
+      if (a.kind === "raise_to") return "Raise to " + a.total;
+      return a.kind;
+    }
+
+    function updateRaiseReadout(state) {
+      const v = parseInt(raiseSlider.value, 10);
+      const bb = state.bb_chips || 20;
+      const bbNum = (v / bb).toFixed(2);
+      raiseReadout.textContent = v + " chips (" + bbNum + " BB)";
+    }
+
+    /** Last action by the bot (seat 1) in this hand, for the bot row. */
+    function formatLastBotAction(tail) {
+      if (!tail || !tail.length) return "";
+      for (let i = tail.length - 1; i >= 0; i--) {
+        const e = tail[i];
+        if (e.player !== 1 || !e.action) continue;
+        const a = e.action;
+        if (a.kind === "fold") return "Folded";
+        if (a.kind === "call") return "Called " + (a.amount != null ? a.amount : "") + " chips";
+        if (a.kind === "check") return "Checked";
+        if (a.kind === "raise_to") return "Raised to " + a.total + " chips";
+        return "Acted";
+      }
+      return "";
+    }
+
+    function renderPlayerHud(s) {
+      const preflop = s.phase === "preflop";
+      const handOver = s.phase === "hand_over";
+      for (let seat = 0; seat < 2; seat++) {
+        const stack = s.stacks[seat];
+        const contrib = handOver ? 0 : s.round_contrib[seat];
+        const total = stack + contrib;
+
+        const tb = document.querySelector("#stack-track-" + seat + " .stack-track-behind");
+        const tp = document.querySelector("#stack-track-" + seat + " .stack-track-pot");
+        if (total > 0) {
+          tb.style.width = (100 * stack) / total + "%";
+          tp.style.width = (100 * contrib) / total + "%";
+        } else {
+          tb.style.width = "100%";
+          tp.style.width = "0%";
+        }
+
+        const betPill = document.getElementById("bet-pill-" + seat);
+        const betChips = document.getElementById("bet-chips-" + seat);
+        if (preflop && contrib > 0) {
+          betPill.hidden = false;
+          betChips.textContent = contrib.toLocaleString() + " in pot";
+          betPill.setAttribute(
+            "aria-label",
+            (seat === 0 ? "Your" : "Bot") + " contribution: " + contrib + " chips"
+          );
+        } else {
+          betPill.hidden = true;
+        }
+      }
+
+      const botLine = document.getElementById("bot-last-move");
+      const bl = formatLastBotAction(s.history_tail || []);
+      if (bl && (preflop || handOver)) {
+        botLine.textContent = "Last move: " + bl;
+        botLine.hidden = false;
+      } else {
+        botLine.hidden = true;
+      }
+
+      document.getElementById("player-stack-0").textContent = s.stacks[0].toLocaleString();
+      document.getElementById("player-stack-1").textContent = s.stacks[1].toLocaleString();
+    }
+
+    function renderPlayerHudIdle(stacks) {
+      document.getElementById("player-stack-0").textContent = stacks[0].toLocaleString();
+      document.getElementById("player-stack-1").textContent = stacks[1].toLocaleString();
+      for (let seat = 0; seat < 2; seat++) {
+        const tb = document.querySelector("#stack-track-" + seat + " .stack-track-behind");
+        const tp = document.querySelector("#stack-track-" + seat + " .stack-track-pot");
+        tb.style.width = "100%";
+        tp.style.width = "0%";
+        document.getElementById("bet-pill-" + seat).hidden = true;
+      }
+      document.getElementById("bot-last-move").hidden = true;
+    }
+
+    let raiseStateRef = null;
+
+    function renderButtons(legal, state) {
+      btnRow.replaceChildren();
+      raiseStateRef = state || null;
+      raisePanel.hidden = true;
+      raiseCommit.onclick = null;
+      raiseSlider.oninput = null;
+
+      if (!legal || !legal.length) {
+        actionsEl.hidden = true;
+        return;
+      }
+      actionsEl.hidden = false;
+
+      const rr = state && state.raise_range;
+      const useSlider = rr && rr.min <= rr.max;
+
+      for (const a of legal) {
+        if (a.kind === "raise_to" && useSlider) continue;
+        const b = document.createElement("button");
+        b.type = "button";
+        b.textContent = labelAction(a);
+        b.onclick = () => sendAction(a);
+        btnRow.appendChild(b);
+      }
+
+      if (useSlider && raiseStateRef) {
+        raisePanel.hidden = false;
+        raiseSlider.min = String(rr.min);
+        raiseSlider.max = String(rr.max);
+        raiseSlider.step = String(rr.step || 1);
+        raiseSlider.value = String(rr.min);
+        updateRaiseReadout(raiseStateRef);
+        raiseSlider.oninput = () => updateRaiseReadout(raiseStateRef);
+        raiseCommit.onclick = () => {
+          const total = parseInt(raiseSlider.value, 10);
+          sendAction({ kind: "raise_to", total: total });
+        };
+      } else {
+        for (const a of legal) {
+          if (a.kind !== "raise_to") continue;
+          const b = document.createElement("button");
+          b.type = "button";
+          b.textContent = labelAction(a);
+          b.onclick = () => sendAction(a);
+          btnRow.appendChild(b);
+        }
+      }
+    }
+
+    function renderStatePayload(data) {
+      if (data.bot_agent) syncAgentSelect(data.bot_agent);
+      if (data.needs_new_hand) {
+        clearBotSchedule();
+        clearBoardRevealTimers();
+        clearHandOverUiTimeout();
+        prevPhaseForBoard = null;
+        lastPreflopUiSnapshot = null;
+        turnLabel.textContent = "Ready";
+        msg.textContent = "Deal a new hand to start.";
+        potVal.textContent = "0";
+        lastPot = "";
+        result.hidden = true;
+        document.getElementById("board").replaceChildren(cardElement("—"));
+        renderPlayerHudIdle(data.stacks || [0, 0]);
+        renderButtons([], null);
+        setBodyTurn(null);
+        setNewHandWrapVisible(true);
+        return;
+      }
+      const s = data.state;
+
+      const staggerShowdown =
+        s.phase === "hand_over" &&
+        prevPhaseForBoard === "preflop" &&
+        s.board &&
+        s.board.length === 5;
+
+      if (s.phase === "preflop") {
+        lastPreflopUiSnapshot = {
+          stacks: [...s.stacks],
+          round_contrib: [...s.round_contrib],
+          pot: s.pot,
+        };
+      }
+
+      clearHandOverUiTimeout();
+
+      setBodyTurn(s);
+      if (s.phase === "hand_over" || (s.phase === "preflop" && s.actor === 0)) {
+        clearBotSchedule();
+      }
+
+      if (staggerShowdown) {
+        turnLabel.textContent = "Showdown";
+        msg.textContent = "Board running out…";
+      } else if (s.phase === "preflop" && s.actor === 0) {
+        turnLabel.textContent = "Your turn";
+        msg.innerHTML = "";
+      } else if (s.phase === "preflop" && s.actor === 1) {
+        turnLabel.textContent = "Bot";
+        msg.innerHTML =
+          '<span class="bot-dots" aria-hidden="true"><span></span><span></span><span></span></span> Bot is thinking…';
+      } else if (s.phase === "hand_over") {
+        turnLabel.textContent = "Complete";
+        msg.textContent = "";
+      } else {
+        turnLabel.textContent = "—";
+        msg.textContent = "";
+      }
+
+      if (staggerShowdown) {
+        const snap = lastPreflopUiSnapshot || {
+          stacks: [...s.stacks],
+          round_contrib: [...(s.round_contrib || [0, 0])],
+          pot: s.pot,
+        };
+        potVal.textContent = String(snap.pot);
+        renderPlayerHud(
+          Object.assign({}, s, {
+            stacks: snap.stacks,
+            round_contrib: snap.round_contrib,
+            phase: "preflop",
+          })
+        );
+        document.getElementById("hole0").replaceChildren(...s.hole_cards[0].map((c, i) => cardElement(c, i)));
+        document.getElementById("hole1").replaceChildren(...s.hole_cards[1].map((c, i) => cardElement(c, i)));
+        renderBoardArea(s, true);
+        prevPhaseForBoard = s.phase;
+        result.hidden = true;
+        renderButtons([], null);
+        handOverUiTimeoutId = setTimeout(function () {
+          handOverUiTimeoutId = null;
+          applyFinalHandOverUi(s);
+        }, boardRevealCompleteMs());
+        setNewHandWrapVisible(false);
+        return;
+      }
+
+      const potStr = String(s.pot);
+      potVal.textContent = potStr;
+      if (lastPot !== null && lastPot !== potStr && s.pot > 0) {
+        potBadge.classList.remove("pot-updated");
+        void potBadge.offsetWidth;
+        potBadge.classList.add("pot-updated");
+      }
+      lastPot = potStr;
+
+      renderPlayerHud(s);
+
+      const h0 = s.hole_cards[0].map((c, i) => cardElement(c, i));
+      const h1 = s.hole_cards[1].map((c, i) => cardElement(c, i));
+      document.getElementById("hole0").replaceChildren(...h0);
+      document.getElementById("hole1").replaceChildren(...h1);
+
+      renderBoardArea(s, false);
+      prevPhaseForBoard = s.phase;
+
+      result.hidden = s.phase !== "hand_over";
+      result.classList.remove("win-you", "win-bot", "chop");
+      if (s.phase === "hand_over") {
+        if (s.winner === -1) {
+          result.textContent = "Chop — split pot.";
+          result.classList.add("chop");
+        } else if (s.winner === 0) {
+          result.textContent = "You win the pot.";
+          result.classList.add("win-you");
+        } else {
+          result.textContent = "Bot wins the pot.";
+          result.classList.add("win-bot");
+        }
+      }
+
+      renderButtons(s.legal_actions || [], s);
+
+      setNewHandWrapVisible(s.phase === "hand_over");
+    }
+
+    async function sendAction(a) {
+      const body = { kind: a.kind };
+      if (a.kind === "raise_to") body.total = a.total;
+      const r = await fetch("/api/action", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+        ...FETCH_OPTS,
+      });
+      const data = await r.json();
+      if (!r.ok) {
+        msg.textContent = data.error || "Error";
+        return;
+      }
+      renderStatePayload({ state: data.state });
+      scheduleBotIfNeeded(data.state);
+    }
+
+    async function refresh() {
+      const r = await fetch("/api/state", { ...FETCH_OPTS });
+      let data = await r.json();
+      if (data.needs_new_hand) {
+        const nr = await fetch("/api/new_hand", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: "{}",
+          ...FETCH_OPTS,
+        });
+        if (nr.ok) {
+          data = await nr.json();
+        }
+      }
+      renderStatePayload(data);
+      if (data.state && data.state.phase === "preflop" && data.state.actor === 1) {
+        scheduleBotIfNeeded(data.state);
+      }
+    }
+
+    document.getElementById("new-hand").onclick = async () => {
+      setBusy(true);
+      clearBotSchedule();
+      try {
+        const r = await fetch("/api/new_hand", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: "{}",
+          ...FETCH_OPTS,
+        });
+        const data = await r.json();
+        if (!r.ok) {
+          msg.textContent = data.error || "Error";
+          return;
+        }
+        lastPot = null;
+        renderStatePayload({ state: data.state });
+        if (data.state && data.state.phase === "preflop" && data.state.actor === 1) {
+          scheduleBotIfNeeded(data.state);
+        }
+      } finally {
+        setBusy(false);
+      }
+    };
+
+    refresh();
+  </script>
+</body>
+</html>

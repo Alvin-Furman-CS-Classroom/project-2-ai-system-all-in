@@ -54,13 +54,13 @@ Poker is an ideal domain for exploring AI concepts because it combines incomplet
 
 **Topics:** Monte Carlo Methods, Optimization
 
-**Input:** Position (Button/Big Blind), stack sizes (tuple), opponent tendency category (string), optional knowledge base from Module 1 (for playability filtering). This module operates independently of Module 2; optimal opening actions are derived purely from Monte Carlo simulation without using heuristics or closed-form EV formulas.
+**Input:** Position (Button/Big Blind), stack sizes (tuple), opponent tendency category (string). This module does not depend on Module 1 or Module 2; optimal opening actions are derived purely from Monte Carlo simulation (no Module 2 heuristics or closed-form EV formulas), so it can serve as a standalone agent competing against the Module 1–2 agent.
 
 **Output:** Optimal opening action strategy (e.g., fold or open to X BB per hand or range), computed by simulation rather than heuristics or closed-form EV. Output includes expected value of the strategy and confidence intervals from simulation. May include a list of hands and their recommended opening actions (fold or bet size).
 
 **Integration:** This module uses Monte Carlo simulation to compute optimal opening actions directly: it simulates many outcomes (e.g., opponent responses, hand runouts) and chooses actions that maximize simulated value. It does not use Module 2's heuristics or EV formulas. The resulting strategy provides an alternative approach to bet sizing that complements the search-based method.
 
-**Prerequisites:** Course content on Monte Carlo methods and optimization. Module 1 (optional) for rule constraints or playability filtering.
+**Prerequisites:** Course content on Monte Carlo methods and optimization.
 
 ---
 

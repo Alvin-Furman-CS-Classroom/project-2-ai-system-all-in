@@ -22,7 +22,6 @@ def optimize_opening_actions(
     position: str,
     stack_sizes: Tuple[int, int],
     opponent_tendency: str,
-    knowledge_base_from_module1: Optional[Any] = None,
     hands: Optional[List[str]] = None,
     candidate_bet_sizes: Optional[List[float]] = None,
     num_simulations: int = 1000,
@@ -39,8 +38,6 @@ def optimize_opening_actions(
         position: "Button" or "Big Blind".
         stack_sizes: (your_stack, opponent_stack) in BB.
         opponent_tendency: Opponent tendency category.
-        knowledge_base_from_module1: Optional Module 1 output for playability (e.g.
-            only consider hands that are playable).
         hands: List of hands to optimize; if None, use a default set of hands.
         candidate_bet_sizes: Opening bet sizes to consider (in BB); if None, use
             a default set (e.g. 2, 2.5, 3, 4, 5).
@@ -63,23 +60,6 @@ def optimize_opening_actions(
     hand_recommendations: List[Dict[str, Any]] = []
 
     for hand in hands_to_use:
-        # Optional: honor Module 1 playability if provided
-        if knowledge_base_from_module1 is not None:
-            # Expecting a dict-like with per-hand playability, or a single boolean.
-            # To keep this generic, if a mapping is provided and this hand is marked
-            # unplayable, we always fold.
-            playable_map = getattr(knowledge_base_from_module1, "get", None)
-            if callable(playable_map):
-                playable = knowledge_base_from_module1.get(hand, True)
-            else:
-                playable = bool(knowledge_base_from_module1)
-            if not playable:
-                optimized_strategy[hand] = 0.0
-                hand_recommendations.append(
-                    {"hand": hand, "action": "fold", "bet_size": 0.0, "value_estimate": 0.0}
-                )
-                continue
-
         # Evaluate fold (baseline 0.0)
         best_action = "fold"
         best_bet_size = 0.0
