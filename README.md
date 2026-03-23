@@ -50,16 +50,16 @@ your-repo/
 
 ## Setup
 
-Module 1 is implemented and ready to use.
+Modules 1-3 are implemented and ready to use.
 
 Dependencies:
-- Python 3.7+ (for dataclasses support)
-- Standard library only (typing, dataclasses)
+- Python 3.9+ recommended
+- Install project dependencies: `pip install -r requirements.txt`
 
 Setup steps:
 1. Clone the repository
 2. Ensure Python 3.7+ is installed
-3. No additional package installation required (uses only standard library)
+3. Install dependencies: `pip install -r requirements.txt`
 
 Environment variables:
 - None required
@@ -87,7 +87,7 @@ print(f"Reason: {result['reason']}")
 
 Commands for running modules:
 - Module 1: Use Python import as shown above, or run interactively
-- Module 2: `[command to be added]`
+- Module 2: `python3 "Module 2/demo_module2.py"`
 - Module 3: `python3 "Module 3/demo_module3.py"`
 - **Preflop + showdown web demo** (human vs random bot): `pip install -r requirements.txt` then `python3 -m web_app.server` — open http://127.0.0.1:5000/ — your move returns immediately; the bot’s “thinking” delay is **client-side** in `web_app/templates/index.html` (`BOT_THINK_MIN_MS` / `BOT_THINK_MAX_MS`).
 - Module 4: `[command to be added]`
@@ -97,12 +97,11 @@ Commands for running modules:
 
 **Unit Tests** (`unit_tests/`): Mirror the structure of module directories. Each module has corresponding unit tests.
 
-**Integration Tests** (`integration_tests/`): Create a new subfolder for each module beyond the first, demonstrating how modules work together.
-
 Test commands:
 - Run Module 1 unit tests: `python3 -m unittest "unit_tests/Module 1/test_propositional_logic.py" -v`
+- Run Module 2 unit tests: `python3 -m unittest "unit_tests/Module 2/test_bet_sizing_search.py" -v`
+- Run Module 3 unit tests: `python3 -m unittest "unit_tests/Module 3/test_module3_monte_carlo.py" -v`
 - Run all unit tests: `python3 -m unittest discover unit_tests -v`
-- Run integration tests: `[command to be added]` (for future modules)
 
 Test data:
 - Module 1 tests cover: all hand types, positions, opponent types, stack sizes, edge cases, and backward chaining scenarios
@@ -113,8 +112,8 @@ Test data:
 | Checkpoint | Date | Modules Included | Status | Evidence |
 | ---------- | ---- | ---------------- | ------ | -------- |
 | 1 | Wednesday, Feb 11 | Module 1 (Propositional Logic) | ✅ Complete | Implementation: `Module 1/propositional_logic.py`, Tests: `unit_tests/Module 1/test_propositional_logic.py` (49 tests), Reports: `checkpoint_1_elegance_report.md`, `checkpoint_1_module_report.md` |
-| 2 | Thursday, Feb 26 | Modules 1-2 (Propositional Logic, Informed Search) | [Status to be updated] | [Evidence to be added] |
-| 3 | Thursday, March 19 | Modules 1-3 (Propositional Logic, Informed Search, Advanced Search/Optimization) | [Status to be updated] | [Evidence to be added] |
+| 2 | Thursday, Feb 26 | Modules 1-2 (Propositional Logic, Informed Search) | ✅ Complete | Module 2 implementation: `Module 2/bet_sizing_search.py`, `Module 2/ev_calculator.py`, `Module 2/heuristic.py`, `Module 2/bet_size_discretization.py`; Demo: `Module 2/demo_module2.py`; Unit tests: `unit_tests/Module 2/test_bet_sizing_search.py`; Reports: `Module 2/checkpoint_2/checkpoint_2_module_report.md`, `Module 2/checkpoint_2/checkpoint_2_elegance_report.md` |
+| 3 | Thursday, March 19 | Modules 1-3 (Propositional Logic, Informed Search, Advanced Search/Optimization) | ✅ Complete | Module 3 implementation: `Module 3/monte_carlo_simulator.py`, `Module 3/bet_sizing_optimizer.py`, `Module 3/strategy_evaluator.py`; Unit tests: `unit_tests/Module 3/test_module3_monte_carlo.py`; Demo: `Module 3/demo_module3.py`; Review: `docs/checkpoint_3_code_review.md` |
 | 4 | Thursday, April 2 | Modules 1-4 (All except Reinforcement Learning) | [Status to be updated] | [Evidence to be added] |
 | 5 | Thursday, April 16 | Modules 1-5 (Complete system) | [Status to be updated] | [Evidence to be added] |
 
@@ -127,8 +126,7 @@ Before each module:
 3. Review and edit the plan. You must understand and approve the approach.
 4. Implement the module in the appropriate module directory (e.g., `Module 1/`).
 5. Unit test the module, placing tests in `unit_tests/` (parallel structure to module directories).
-6. For modules beyond the first, add integration tests in `integration_tests/` (new subfolder per module).
-7. Run a rubric review using the code-review skill at `.claude/skills/code-review/SKILL.md`.
+6. Run a rubric review using the code-review skill at `.claude/skills/code-review/SKILL.md`.
 
 Keep `AGENTS.md` updated with your module plan, constraints, and links to APIs/data sources.
 
