@@ -2,7 +2,7 @@
 
 ## Overview
 
-This system provides a comprehensive platform for playing heads-up (two-player) Texas Hold'em pre-flop poker against AI agents, each implementing different AI techniques. The system integrates multiple AI paradigms to create four distinct agents: a rule-based agent using propositional logic and A* search; a Monte Carlo simulation agent; a game theory optimal (GTO) agent using Nash equilibrium; and an adaptive learning agent using reinforcement learning. Users can compete against any agent, and the system enables agent-versus-agent competitions to quantitatively compare the effectiveness of different AI approaches.
+This system provides a comprehensive platform for playing heads-up (two-player) Texas Hold'em pre-flop poker against AI agents, each implementing different AI techniques. The system integrates multiple AI paradigms to create four distinct agents: a rule-based agent using propositional logic and A* search; a Monte Carlo simulation agent; an LLM-based strategy agent; and an adaptive learning agent using reinforcement learning. Users can compete against any agent, and the system enables agent-versus-agent competitions to quantitatively compare the effectiveness of different AI approaches.
 
 Poker is an ideal domain for exploring AI concepts because it combines incomplete information, strategic decision-making, and optimization challenges. The pre-flop phase provides a manageable scope while still requiring sophisticated analysis. By implementing each AI technique as a playable agent and enabling direct comparison, this system demonstrates how different AI paradigms perform in practice, revealing trade-offs between speed and accuracy, exploitation and unexploitability, and rule-based versus learning-based approaches. This comparative analysis makes the system both educationally valuable and practically useful for understanding AI strategy optimization.
 
@@ -10,7 +10,7 @@ Poker is an ideal domain for exploring AI concepts because it combines incomplet
 
 - **Agent 1 – Rule-Based + Search**: Uses Module 1 (Propositional Logic) to determine playability and Module 2 (A* Search) to find optimal bet sizes.
 - **Agent 2 – Monte Carlo**: Uses Module 3 to compute optimal opening actions via Monte Carlo simulation (no heuristics or closed-form EV).
-- **Agent 3 – GTO (Nash Equilibrium)**: Uses Module 4 to follow pre-flop Nash equilibrium strategies.
+- **Agent 3 – LLM Strategy Agent**: Uses Module 4 to make context-aware poker decisions with structured prompt + reasoning output.
 - **Agent 4 – Adaptive Learning**: Uses Module 5 (Reinforcement Learning) to learn and exploit opponent tendencies over time.
 
 ## Team
@@ -30,10 +30,10 @@ Your system must include 5-6 modules. Fill in the table below as you plan each m
 | Module | Topic(s) | Inputs | Outputs | Depends On | Checkpoint |
 | ------ | -------- | ------ | ------- | ---------- | ---------- |
 | 1 | Propositional Logic (Knowledge Bases, Inference Methods, Chaining, CNF) | Starting hand, position (Button/Big Blind), stack size (big blinds), opponent tendency category | Knowledge base of propositional logic rules in CNF format, playable decision | None | Wednesday, Feb 11 |
-| 2 | Informed Search (A*, IDA*, Beam Search), Optimization | Starting hand, position, stack sizes (tuple), opponent tendency, Module 1 knowledge base | Optimal bet size (multiple of big blind), action recommendation (fold/call/raise), expected value | Module 1 | Thursday, Feb 26 |
+| 2 | Informed Search (A*), Optimization | Starting hand, position, stack sizes (tuple), opponent tendency, Module 1 knowledge base | Optimal bet size (multiple of big blind), action recommendation (fold/call/raise), expected value | Module 1 | Thursday, Feb 26 |
 | 3 | Monte Carlo Methods, Optimization | Position (Button/Big Blind), stack sizes (tuple), opponent tendency category | Optimal opening action strategy (fold or open to X BB) with expected value and confidence intervals | None | Thursday, March 19 |
-| 4 | Game Theory (Minimax, Nash Equilibrium, Mixed Strategies) | Position, stack sizes, Modules 2-3 optimized strategies, Module 1 knowledge base | Deviation metrics, exploitability analysis, equilibrium reference data | Modules 1, 2, 3 | Thursday, April 2 |
-| 5 | Reinforcement Learning (MDP, Policy, Value Functions, Q-Learning) | Historical game data, opponent tendency, Module 4 equilibrium data, Module 3 opening ranges | Learned policy (Q-values), exploitation strategy recommendations | Modules 1, 3, 4 | Thursday, April 16 |
+| 4 | LLM Agent Design, Prompt Engineering, Tool-Augmented Decisions | Current game state (hand, position, stacks, pot, action history), optional outputs from Modules 1-3 | Action recommendation (fold/call/raise + size), reasoning trace, confidence score | Modules 1-3 (optional) | Thursday, April 2 |
+| 5 | Reinforcement Learning (MDP, Policy, Value Functions, Q-Learning) | Historical game data, opponent tendency, optional baseline signals from Modules 1-4 | Learned policy (Q-values), exploitation strategy recommendations | Modules 1-4 (optional) | Thursday, April 16 |
 
 ## Repository Layout
 
@@ -90,7 +90,7 @@ Commands for running modules:
 - Module 2: `python3 "Module 2/demo_module2.py"`
 - Module 3: `python3 "Module 3/demo_module3.py"`
 - **Preflop + showdown web demo** (human vs random bot): `pip install -r requirements.txt` then `python3 -m web_app.server` — open http://127.0.0.1:5000/ — your move returns immediately; the bot’s “thinking” delay is **client-side** in `web_app/templates/index.html` (`BOT_THINK_MIN_MS` / `BOT_THINK_MAX_MS`).
-- Module 4: `[command to be added]`
+- Module 4: `[command to be added: LLM agent demo]`
 - Module 5: `[command to be added]`
 
 ## Testing
@@ -114,7 +114,7 @@ Test data:
 | 1 | Wednesday, Feb 11 | Module 1 (Propositional Logic) | ✅ Complete | Implementation: `Module 1/propositional_logic.py`, Tests: `unit_tests/Module 1/test_propositional_logic.py` (49 tests), Reports: `checkpoint_1_elegance_report.md`, `checkpoint_1_module_report.md` |
 | 2 | Thursday, Feb 26 | Modules 1-2 (Propositional Logic, Informed Search) | ✅ Complete | Module 2 implementation: `Module 2/bet_sizing_search.py`, `Module 2/ev_calculator.py`, `Module 2/heuristic.py`, `Module 2/bet_size_discretization.py`; Demo: `Module 2/demo_module2.py`; Unit tests: `unit_tests/Module 2/test_bet_sizing_search.py`; Reports: `Module 2/checkpoint_2/checkpoint_2_module_report.md`, `Module 2/checkpoint_2/checkpoint_2_elegance_report.md` |
 | 3 | Thursday, March 19 | Modules 1-3 (Propositional Logic, Informed Search, Advanced Search/Optimization) | ✅ Complete | Module 3 implementation: `Module 3/monte_carlo_simulator.py`, `Module 3/bet_sizing_optimizer.py`, `Module 3/strategy_evaluator.py`; Unit tests: `unit_tests/Module 3/test_module3_monte_carlo.py`; Demo: `Module 3/demo_module3.py`; Review: `docs/checkpoint_3_code_review.md` |
-| 4 | Thursday, April 2 | Modules 1-4 (All except Reinforcement Learning) | [Status to be updated] | [Evidence to be added] |
+| 4 | Thursday, April 2 | Modules 1-4 (including LLM agent) | [Status to be updated] | [Evidence to be added] |
 | 5 | Thursday, April 16 | Modules 1-5 (Complete system) | [Status to be updated] | [Evidence to be added] |
 
 ## Required Workflow (Agent-Guided)
@@ -145,5 +145,5 @@ Keep `AGENTS.md` updated with your module plan, constraints, and links to APIs/d
 - [To be added if external datasets are used]
 
 **Poker Strategy References:**
-- [Known heads-up pre-flop Nash equilibrium solutions to be referenced]
-- [Hand equity/ranking tables to be referenced]
+- Hand equity/ranking table: `docs/POKER_HAND_WIN_PERCENTAGES.md`
+- LLM prompting + guardrail references: [to be added in Module 4 implementation]

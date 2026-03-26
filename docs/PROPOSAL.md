@@ -2,7 +2,7 @@
 
 ## System Overview
 
-This system provides a comprehensive platform for playing heads-up (two-player) Texas Hold'em pre-flop poker against AI agents, each implementing different AI techniques. The system integrates multiple AI paradigms to create four distinct agents: a rule-based agent using propositional logic and A* search; a Monte Carlo simulation agent; a game theory optimal (GTO) agent using Nash equilibrium; and an adaptive learning agent using reinforcement learning. Users can compete against any agent, and the system enables agent-versus-agent competitions to quantitatively compare the effectiveness of different AI approaches.
+This system provides a comprehensive platform for playing heads-up (two-player) Texas Hold'em pre-flop poker against AI agents, each implementing different AI techniques. The system integrates multiple AI paradigms to create four distinct agents: a rule-based agent using propositional logic and A* search; a Monte Carlo simulation agent; an LLM-based strategy agent; and an adaptive learning agent using reinforcement learning. Users can compete against any agent, and the system enables agent-versus-agent competitions to quantitatively compare the effectiveness of different AI approaches.
 
 Poker is an ideal domain for exploring AI concepts because it combines incomplete information, strategic decision-making, and optimization challenges. The pre-flop phase provides a manageable scope while still requiring sophisticated analysis. By implementing each AI technique as a playable agent and enabling direct comparison, this system demonstrates how different AI paradigms perform in practice, revealing trade-offs between speed and accuracy, exploitation and unexploitability, and rule-based versus learning-based approaches. This comparative analysis makes the system both educationally valuable and practically useful for understanding AI strategy optimization.
 
@@ -64,19 +64,19 @@ Unlike traditional systems that implement modules in isolation, this project org
 
 ---
 
-### Module 4: Nash Equilibrium Strategy Analysis
+### Module 4: LLM-Based Poker Strategy Agent
 
-**Topics:** Games and Game Theory (Nash Equilibrium, Minimax, Mixed Strategies)
+**Topics:** Large Language Models, Prompt Engineering, Tool-Augmented Decision Making
 
-**Input:** Position (Button/Big Blind), stack sizes (tuple), optional knowledge base from Module 1. The module does not depend on Module 2 or Module 3. It references known heads-up pre-flop Nash equilibrium solutions (from established poker solvers or published research) as baseline strategies.
+**Input:** Current game state (hand, position, stack sizes, pot, prior actions), optional outputs from Modules 1-3 (rule constraints, search recommendations, Monte Carlo confidence intervals), and structured prompt templates for decision guidance.
 
-**Output:** Nash equilibrium reference data: equilibrium frequencies and mixed strategies for key pre-flop decision points. Output format: dictionary with equilibrium strategies, comparison metrics (how a given strategy deviates from equilibrium, if one is provided), and exploitability analysis where applicable.
+**Output:** Action recommendation (fold/call/raise with size), natural-language reasoning trace, and confidence score. Output format: dictionary with selected action, bet size, explanation, and optional references to supporting signals from earlier modules.
 
-**Integration:** This module provides the Nash equilibrium baseline for pre-flop play independently of Modules 2 and 3. The equilibrium reference establishes a theoretical baseline that other modules can compare against. This demonstrates game theory concepts and provides an unexploitable strategy baseline.
+**Integration:** This module converts structured game context into an LLM prompt and uses model output to produce a playable decision. It can optionally incorporate Module 1 constraints and Module 2/3 recommendations as context, but remains a distinct decision-making agent focused on language-model reasoning.
 
-**Agent Usage:** Used by **Agent 3 (GTO Agent)** to make decisions based on Nash equilibrium strategies.
+**Agent Usage:** Used by **Agent 3 (LLM Agent)** to make context-aware decisions with explainable reasoning.
 
-**Prerequisites:** Course content on Game Theory, Nash Equilibrium, Minimax, and mixed strategies. Module 1 (optional) for rule constraints.
+**Prerequisites:** Course content on language models, prompt design, and model evaluation. Modules 1-3 (optional) for structured context features.
 
 ---
 
@@ -84,15 +84,15 @@ Unlike traditional systems that implement modules in isolation, this project org
 
 **Topics:** Reinforcement Learning (MDP, Policy, Value Functions, Q-Learning)
 
-**Input:** Historical game data (list of tuples: (hand, position, action_taken, opponent_action, outcome, reward)), opponent tendency category (string), equilibrium reference data from Module 4 (baseline policy for comparison), opening ranges from Module 3 (optional).
+**Input:** Historical game data (list of tuples: (hand, position, action_taken, opponent_action, outcome, reward)), opponent tendency category (string), and optional baseline strategies from Modules 1-3 and Module 4.
 
-**Output:** Learned policy (dictionary mapping (hand, position, opponent_tendency) to optimal action with Q-values), exploitation strategy recommendations (how to deviate from Nash equilibrium to exploit opponent weaknesses). Output includes action-value function (Q-table or function approximation) and updated strategy recommendations.
+**Output:** Learned policy (dictionary mapping (hand, position, opponent_tendency) to optimal action with Q-values), exploitation strategy recommendations, and updated action-value estimates (Q-table or function approximation).
 
-**Integration:** This module learns to adapt strategies based on opponent behavior, using Module 4's equilibrium reference data as a baseline. The learned exploitation strategies demonstrate how reinforcement learning can adapt to exploit opponent weaknesses, complementing the unexploitable GTO approach.
+**Integration:** This module trains an RL policy to adapt decisions based on outcomes and opponent behavior over time. It can be initialized from other module recommendations but ultimately learns from interaction data to improve performance.
 
 **Agent Usage:** Used by **Agent 4 (Adaptive Learning Agent)** to make decisions that adapt and exploit opponent behavior.
 
-**Prerequisites:** Course content on Reinforcement Learning, MDPs, Q-Learning, and policy learning. Modules 1, 3, and 4 for foundational knowledge, ranges, and equilibrium baselines.
+**Prerequisites:** Course content on Reinforcement Learning, MDPs, Q-Learning, and policy learning. Modules 1, 3, and 4 (optional) for initialization and comparison baselines.
 
 ---
 
@@ -136,22 +136,23 @@ Unlike traditional systems that implement modules in isolation, this project org
 
 ---
 
-### Agent 3: GTO (Game Theory Optimal) Agent
-**Modules Used:** Module 4 (Nash Equilibrium)
+### Agent 3: LLM Strategy Agent
+**Modules Used:** Module 4 (LLM-Based Strategy Agent)
 
 **Strategy:**
-1. Uses Nash equilibrium strategies
-2. Plays unexploitable strategy
-3. References known heads-up pre-flop equilibrium solutions
+1. Builds a structured prompt from the game state
+2. Uses an LLM to choose fold/call/raise and sizing
+3. Returns both an action and reasoning/explanation
 
 **Strengths:**
-- Theoretically optimal (unexploitable)
-- Strong baseline strategy
-- Good for learning GTO play
+- Flexible reasoning over varied scenarios
+- Human-readable explanations
+- Easy to extend with prompt/tool improvements
 
 **Weaknesses:**
-- Doesn't exploit opponent weaknesses
-- May be too conservative
+- Output quality depends on prompt/model quality
+- Can be inconsistent without strict constraints
+- May need guardrails for reliable bet sizing
 
 ---
 
@@ -209,7 +210,7 @@ _A timeline showing that each module's prerequisites align with the course sched
 | 1      | Propositional Logic | Week 2 | Wednesday, Feb 11  | Agent 1 (partial) |
 | 2      | Informed Search (A*), Optimization | Week 3 | Thursday, Feb 26 | Agent 1 (complete) |
 | 3      | Monte Carlo, Optimization | Week 5.5 | Thursday, March 19 | Agent 2 (complete) |
-| 4      | Game Theory (Nash Equilibrium) | Week 7 | Thursday, April 2 | Agent 3 (complete) |
+| 4      | LLM Agent Design & Prompt Engineering | Week 7 | Thursday, April 2 | Agent 3 (complete) |
 | 5      | Reinforcement Learning | Week 10 | Thursday, April 16 | Agent 4 (complete) |
 
 **Agent Development Timeline:**
@@ -222,9 +223,9 @@ _A timeline showing that each module's prerequisites align with the course sched
 
 ## Coverage Rationale
 
-This topic selection fits poker strategy analysis naturally and enables meaningful comparison of AI techniques. **Propositional Logic** encodes fundamental decision rules that establish the knowledge foundation. **Informed Search (A*)** finds optimal bet sizes by exploring action spaces efficiently using heuristics. **Monte Carlo Methods** provide an alternative approach through simulation, demonstrating how different optimization techniques compare. **Game Theory (Nash Equilibrium)** provides theoretical baselines and unexploitable strategies. **Reinforcement Learning** enables adaptive exploitation, showing how learning-based approaches can outperform static strategies.
+This topic selection fits poker strategy analysis naturally and enables meaningful comparison of AI techniques. **Propositional Logic** encodes fundamental decision rules that establish the knowledge foundation. **Informed Search (A*)** finds optimal bet sizes by exploring action spaces efficiently using heuristics. **Monte Carlo Methods** provide an alternative approach through simulation, demonstrating how different optimization techniques compare. **LLM-based reasoning** provides a flexible strategy agent with explainable natural-language outputs. **Reinforcement Learning** enables adaptive exploitation, showing how learning-based approaches can outperform static strategies.
 
-The progression from rules → search → simulation → game theory → learning demonstrates how different AI paradigms complement each other. Each topic addresses a distinct aspect: logic provides structure, search finds solutions, simulation estimates values, game theory establishes baselines, and RL enables adaptation.
+The progression from rules → search → simulation → LLM reasoning → learning demonstrates how different AI paradigms complement each other. Each topic addresses a distinct aspect: logic provides structure, search finds solutions, simulation estimates values, LLMs provide contextual reasoning, and RL enables adaptation.
 
 **Comparative Value:** By implementing each technique as a playable agent, the system enables direct quantitative comparison:
 - Which approach wins more often?
@@ -237,7 +238,7 @@ This comparative analysis provides unique educational and research value, demons
 **Trade-offs considered:** 
 - Supervised Learning could predict opponent actions but was omitted to focus on strategic optimization
 - First-Order Logic could encode more complex relationships but Propositional Logic suffices for pre-flop rules
-- For Game Theory, computing Nash equilibrium from scratch would be computationally intensive; instead, the system references known equilibrium solutions and focuses on comparative analysis
+- For LLM-based decisions, output quality depends on prompt design and guardrails; the system mitigates this with structured prompts and action validation
 - The focus on pre-flop (rather than full game trees) makes the system feasible while still demonstrating all required concepts effectively
 - Agent comparison adds minimal complexity (standardized interface) while providing significant value
 
