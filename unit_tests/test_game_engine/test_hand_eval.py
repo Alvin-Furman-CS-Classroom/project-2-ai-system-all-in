@@ -39,5 +39,16 @@ class TestChipConservation(unittest.TestCase):
             self.assertEqual(sum(h.stacks) + h.pot, total)
 
 
+class TestDecisionMetaHistory(unittest.TestCase):
+    def test_apply_action_stores_llm_blob_when_provided(self):
+        rng = random.Random(0)
+        h = new_hand([200, 200], rng=rng, button=0, sb_chips=10, bb_chips=20)
+        meta = {"reason": "test", "model": "stub", "street": "preflop"}
+        apply_action(h, {"kind": "call"}, decision_meta=meta)
+        last = [e for e in h.history if e.get("player") == 0][-1]
+        self.assertIn("llm", last)
+        self.assertEqual(last["llm"]["reason"], "test")
+
+
 if __name__ == "__main__":
     unittest.main()

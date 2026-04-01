@@ -161,13 +161,25 @@ def raise_amount_range(state: HandState) -> Optional[Dict[str, int]]:
     return {"min": min_raise_to, "max": max_total, "step": 1}
 
 
-def apply_action(state: HandState, action: Dict[str, Any]) -> None:
-    """Mutate state. action: kind fold|call|check|raise_to with optional total."""
+def apply_action(
+    state: HandState,
+    action: Dict[str, Any],
+    *,
+    decision_meta: Optional[Dict[str, Any]] = None,
+) -> None:
+    """Mutate state. action: kind fold|call|check|raise_to with optional total.
+
+    Optional ``decision_meta`` (e.g. LLM reason/model) is stored on this history entry
+    under key ``llm`` for post-hand review in the UI.
+    """
     if state.phase != "preflop":
         raise ValueError("Not in preflop")
     p = state.actor
     kind: ActionKind = action["kind"]
-    state.history.append({"player": p, "action": dict(action)})
+    entry: Dict[str, Any] = {"player": p, "action": dict(action)}
+    if decision_meta is not None:
+        entry["llm"] = decision_meta
+    state.history.append(entry)
 
     if kind == "fold":
         w = state._other(p)

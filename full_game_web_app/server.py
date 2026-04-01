@@ -1,8 +1,8 @@
 """
 Flask web UI (full game): human (seat 0) vs bot (seat 1), full-hand Hold'em.
 
-This is a copy of the pre-flop-only `web_app` wired up to `full_game_engine` so
-that betting and dealing can proceed across all streets.
+Opponent is chosen per session: **Module 5 RL** (``rl``) or **Module 4 LLM**
+(``m4``, Ollama-backed; falls back to random legal on error).
 
 Human actions return immediately. The bot moves only when the client POSTs
 `/api/advance_bot` (after a client-side "thinking" delay).
@@ -116,6 +116,8 @@ def state_to_json(state: HandState, human_seat: int = 0) -> Dict[str, Any]:
         "bb_chips": state.bb_chips,
         "history_tail": state.history[-6:],
     }
+    if state.phase == "hand_over":
+        out["history_full"] = state.history
     # Expose legal actions whenever it's the human's turn during a betting phase.
     if state.phase in {"preflop", "flop", "turn", "river"} and state.actor == human_seat:
         la = legal_actions(state)
@@ -135,8 +137,8 @@ def run_bot_until_human(state: HandState, rng: random.Random, sid: Optional[str]
         ag = _bot_agent_for_session(sid) if sid else DEFAULT_BOT_AGENT
         # Let the bot act on any betting street until it's no longer their turn.
         while state.phase in {"preflop", "flop", "turn", "river"} and state.actor == 1:
-            act = pick_bot_action(ag, state, rng)
-            apply_action(state, act)
+            act, bot_meta = pick_bot_action(ag, state, rng)
+            apply_action(state, act, decision_meta=bot_meta)
 
     if lock:
         with lock:
@@ -209,7 +211,7 @@ def api_reset_game():
 
 @app.route("/api/set_agent", methods=["POST"])
 def api_set_agent():
-    """Set opponent agent for this session: random | m12 | m3."""
+    """Set opponent agent for this session: rl | m4."""
     sid = _ensure_session()
     body = request.get_json(silent=True) or {}
     raw = body.get("agent", DEFAULT_BOT_AGENT)

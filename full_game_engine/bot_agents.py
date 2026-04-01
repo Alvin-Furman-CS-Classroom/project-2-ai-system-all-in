@@ -1,9 +1,7 @@
 """
-Bot policy wrapper for full_game_engine: RL agent from Module 5 only.
+Bot policy for full_game_engine: Module 5 RL and/or Module 4 LLM (index pick).
 
-This replaces the earlier multi-bot routing with a single bot type "rl" that
-loads `Module 5/checkpoints/my_policy.pkl` and uses the discrete action buckets
-from Module 5 to select legal actions on every betting street.
+Session agent id: ``rl`` (tabular Q policy) or ``m4`` (Ollama-backed legal index).
 """
 
 from __future__ import annotations
@@ -11,9 +9,10 @@ from __future__ import annotations
 import random
 import sys
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 
 from full_game_engine.hu_hand import HandState, legal_actions, random_legal_action
+from full_game_engine.mc_bot import hole_cards_to_mc_hand
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -21,14 +20,15 @@ M5 = ROOT / "Module 5"
 if str(M5) not in sys.path:
     sys.path.insert(0, str(M5))
 
-from action_mapping import DISCRETE_BUCKETS, legal_buckets, map_bucket_to_action  # type: ignore  # noqa: E402
+from action_mapping import legal_buckets, map_bucket_to_action  # type: ignore  # noqa: E402
 from rl_agent import RLPokerAgent  # type: ignore  # noqa: E402
 from state_encoder import encode_from_hand_state  # type: ignore  # noqa: E402
 
-_BOT_AGENTS = frozenset({"rl"})
+_BOT_AGENTS = frozenset({"rl", "m4"})
 DEFAULT_BOT_AGENT = "rl"
 
 _RL_AGENT: Optional[RLPokerAgent] = None
+_M4_DIR = ROOT / "Module 4"
 
 
 def normalize_agent(name: Optional[str]) -> str:
@@ -50,7 +50,21 @@ def _load_rl_agent() -> Optional[RLPokerAgent]:
         return None
     agent.epsilon = 0.0
     _RL_AGENT = agent
-    return _RL_AGENT
+    return agent
+
+
+def _load_module4_choose_with_meta():
+    """Import Module 4 ``choose_preflop_action_with_meta`` (folder has a space)."""
+    if not _M4_DIR.is_dir():
+        return None
+    if str(_M4_DIR) not in sys.path:
+        sys.path.insert(0, str(_M4_DIR))
+    try:
+        import llm_policy  # type: ignore
+
+        return getattr(llm_policy, "choose_preflop_action_with_meta", None)
+    except ImportError:
+        return None
 
 
 def _rl_action(state: HandState, rng: random.Random) -> Dict[str, Any]:
@@ -64,7 +78,6 @@ def _rl_action(state: HandState, rng: random.Random) -> Dict[str, Any]:
     lbs = legal_buckets(state)
     if not lbs:
         return random_legal_action(state, rng)
-    # If state was never visited, Q-row is created on the fly with zeros.
     bucket = agent.select_action_masked(enc, lbs)
     try:
         return map_bucket_to_action(state, bucket)
@@ -72,11 +85,39 @@ def _rl_action(state: HandState, rng: random.Random) -> Dict[str, Any]:
         return random_legal_action(state, rng)
 
 
-def pick_bot_action(agent: Optional[str], state: HandState, rng: random.Random) -> Dict[str, Any]:
-    """Dispatch to RL bot only (name is kept for API compatibility)."""
-    _ = normalize_agent(agent)
+def _m4_action(
+    state: HandState, rng: random.Random
+) -> Tuple[Dict[str, Any], Optional[Dict[str, Any]]]:
+    """Module 4 LLM: index into legal_actions; fallback on error."""
+    p = state.actor
+    acts = legal_actions(state)
+    if not acts:
+        raise ValueError("No legal actions")
+    c0, c1 = state.hole_cards[p]
+    hand = hole_cards_to_mc_hand(c0, c1)
+    choose = _load_module4_choose_with_meta()
+    if choose is None:
+        return random_legal_action(state, rng), None
     try:
-        return _rl_action(state, rng)
-    except Exception:
-        return random_legal_action(state, rng)
+        act, meta = choose(state, hand, acts, rng)
+        enriched = dict(meta)
+        enriched["street"] = str(state.street)
+        return act, enriched
+    except Exception as e:
+        return random_legal_action(state, rng), {"fallback": "random_legal", "error": str(e)}
 
+
+def pick_bot_action(
+    agent: Optional[str], state: HandState, rng: random.Random
+) -> Tuple[Dict[str, Any], Optional[Dict[str, Any]]]:
+    """Dispatch to RL (``rl``) or Module 4 LLM (``m4``).
+
+    Returns ``(engine_action, decision_meta)``. ``decision_meta`` is set only for ``m4``.
+    """
+    a = normalize_agent(agent)
+    try:
+        if a == "m4":
+            return _m4_action(state, rng)
+        return _rl_action(state, rng), None
+    except Exception:
+        return random_legal_action(state, rng), None

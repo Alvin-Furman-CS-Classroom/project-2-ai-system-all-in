@@ -61,8 +61,10 @@ Setup steps:
 2. Ensure Python 3.7+ is installed
 3. Install dependencies: `pip install -r requirements.txt`
 
-Environment variables:
-- None required
+Environment variables (optional, for Module 4 LLM agent):
+- `OLLAMA_URL=http://127.0.0.1:11434`
+- `OLLAMA_MODEL=llama3.2`
+- `OLLAMA_TIMEOUT_S=15`
 
 ## Running
 
@@ -90,8 +92,9 @@ Commands for running modules:
 - Module 2: `python3 "Module 2/demo_module2.py"`
 - Module 3: `python3 "Module 3/demo_module3.py"`
 - **Preflop + showdown web demo** (human vs random bot): `pip install -r requirements.txt` then `python3 -m web_app.server` — open http://127.0.0.1:5000/ — your move returns immediately; the bot’s “thinking” delay is **client-side** in `web_app/templates/index.html` (`BOT_THINK_MIN_MS` / `BOT_THINK_MAX_MS`).
-- Module 4: `[command to be added: LLM agent demo]`
-- Module 5: `[command to be added]`
+- Module 4 (LLM advisor): `python3 "Module 4/demo_module4.py"`; runtime uses local Ollama (`llama3.2`) via `OLLAMA_URL`.
+- Module 5: `python3 "Module 5/demo_module5.py"` (see `Module 5/README.md` for training commands)
+- **Full-game web demo** (multi-street): `pip install -r requirements.txt` then `python3 -m full_game_web_app.server` — open http://127.0.0.1:5000/ (use e.g. `PORT=5002` if 5000 is busy). Opponent dropdown: **Agent 4 (RL)** or **Agent 3 (LLM)**.
 
 ## Testing
 
@@ -101,7 +104,9 @@ Test commands:
 - Run Module 1 unit tests: `python3 -m unittest "unit_tests/Module 1/test_propositional_logic.py" -v`
 - Run Module 2 unit tests: `python3 -m unittest "unit_tests/Module 2/test_bet_sizing_search.py" -v`
 - Run Module 3 unit tests: `python3 -m unittest "unit_tests/Module 3/test_module3_monte_carlo.py" -v`
-- Run all unit tests: `python3 -m unittest discover unit_tests -v`
+- Run Module 4 unit tests: `python3 -m unittest "unit_tests/Module 4/test_llm_policy.py" -v`
+- Run all unit tests: list each module’s file (folders with spaces break plain `discover`); or run:  
+  `python3 -m unittest unit_tests/test_game_engine/test_hand_eval.py "unit_tests/Module 1/test_propositional_logic.py" "unit_tests/Module 2/test_bet_sizing_search.py" "unit_tests/Module 3/test_module3_monte_carlo.py" "unit_tests/Module 4/test_llm_policy.py"`
 
 Test data:
 - Module 1 tests cover: all hand types, positions, opponent types, stack sizes, edge cases, and backward chaining scenarios

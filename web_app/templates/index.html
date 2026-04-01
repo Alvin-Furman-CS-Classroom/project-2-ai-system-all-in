@@ -20,6 +20,7 @@
           <option value="random">Random baseline</option>
           <option value="m12">Agent 1 (logic + A*)</option>
           <option value="m3" selected>Agent 2 (Monte Carlo)</option>
+          <option value="m4">Agent 3 (LLM - Ollama)</option>
         </select>
       </div>
       <h1>Heads-up: pre-flop only</h1>
@@ -78,6 +79,10 @@
       </div>
 
       <p id="result" class="result" hidden></p>
+      <details class="llm-reasoning" id="llm-reasoning" hidden>
+        <summary class="llm-reasoning-summary">Opponent model reasoning (this hand)</summary>
+        <div id="llm-reasoning-body" class="llm-reasoning-body"></div>
+      </details>
     </section>
 
     <section class="panel actions" id="actions" hidden>
@@ -116,7 +121,7 @@
     const raiseCommit = document.getElementById("raise-commit");
     const newHandWrap = document.getElementById("new-hand-wrap");
     const agentSelect = document.getElementById("agent-select");
-    const BOT_AGENT_IDS = ["random", "m12", "m3"];
+    const BOT_AGENT_IDS = ["random", "m12", "m3", "m4"];
 
     function syncAgentSelect(botAgent) {
       if (!agentSelect || !botAgent) return;
@@ -217,6 +222,7 @@
         result.classList.add("win-bot");
       }
       renderButtons(s.legal_actions || [], s);
+      renderLlmReasoning(s);
     }
 
     /** Bot "thinking" delay is only on the client — tune here (ms). */
@@ -402,6 +408,61 @@
       return a.kind;
     }
 
+    function actionSummaryLine(a) {
+      if (!a || !a.kind) return "—";
+      if (a.kind === "fold") return "Fold";
+      if (a.kind === "call") return "Call " + (a.amount != null ? a.amount + " chips" : "");
+      if (a.kind === "check") return "Check";
+      if (a.kind === "raise_to") return "Raise to " + a.total + " chips";
+      return a.kind;
+    }
+
+    function renderLlmReasoning(s) {
+      const box = document.getElementById("llm-reasoning");
+      const body = document.getElementById("llm-reasoning-body");
+      if (!box || !body) return;
+      if (!s || s.phase !== "hand_over" || !s.history_full) {
+        box.hidden = true;
+        body.replaceChildren();
+        return;
+      }
+      const steps = s.history_full.filter(function (e) {
+        return e.player === 1 && e.llm;
+      });
+      if (steps.length === 0) {
+        box.hidden = true;
+        body.replaceChildren();
+        return;
+      }
+      box.hidden = false;
+      body.replaceChildren();
+      steps.forEach(function (e, idx) {
+        const wrap = document.createElement("div");
+        wrap.className = "llm-step";
+        const title = document.createElement("p");
+        title.className = "llm-step-title";
+        const street = e.llm.street != null ? String(e.llm.street) : "";
+        title.textContent =
+          "Step " +
+          (idx + 1) +
+          (street ? " · " + street : "") +
+          " · " +
+          actionSummaryLine(e.action);
+        const reason = document.createElement("p");
+        reason.className = "llm-step-reason";
+        const bits = [];
+        if (e.llm.reason) bits.push(e.llm.reason);
+        if (e.llm.model) bits.push("Model: " + e.llm.model);
+        if (e.llm.repaired) bits.push("(index repaired on retry)");
+        if (e.llm.error) bits.push("Error: " + e.llm.error);
+        if (e.llm.fallback) bits.push("Fallback: " + e.llm.fallback);
+        reason.textContent = bits.length ? bits.join(" — ") : "(No reason text returned.)";
+        wrap.appendChild(title);
+        wrap.appendChild(reason);
+        body.appendChild(wrap);
+      });
+    }
+
     function updateRaiseReadout(state) {
       const v = parseInt(raiseSlider.value, 10);
       const bb = state.bb_chips || 20;
@@ -552,6 +613,7 @@
         renderButtons([], null);
         setBodyTurn(null);
         setNewHandWrapVisible(true);
+        renderLlmReasoning(null);
         return;
       }
       const s = data.state;
@@ -660,6 +722,7 @@
       renderButtons(s.legal_actions || [], s);
 
       setNewHandWrapVisible(s.phase === "hand_over");
+      if (s.phase === "hand_over") renderLlmReasoning(s);
     }
 
     async function sendAction(a) {

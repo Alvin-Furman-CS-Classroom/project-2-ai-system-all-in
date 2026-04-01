@@ -2,7 +2,8 @@
 Flask web UI: human (seat 0) vs bot (seat 1), pre-flop + showdown runout.
 
 The bot opponent is chosen per session via the UI: random legal actions, Module 1+2
-(rule-based + A* bet sizing), or Module 3 Monte Carlo rollouts (not MCTS).
+(rule-based + A* bet sizing), Module 3 Monte Carlo rollouts (not MCTS), or Module 4
+LLM policy (Ollama-backed; falls back to random legal on error).
 
 Human actions return immediately. The bot moves only when the client POSTs
 /api/advance_bot (after a client-side "thinking" delay).
@@ -105,6 +106,8 @@ def state_to_json(state: HandState, human_seat: int = 0) -> Dict[str, Any]:
         "bb_chips": state.bb_chips,
         "history_tail": state.history[-6:],
     }
+    if state.phase == "hand_over":
+        out["history_full"] = state.history
     if state.phase == "preflop" and state.actor == human_seat:
         out["legal_actions"] = legal_actions(state)
         rr = raise_amount_range(state)
@@ -120,8 +123,8 @@ def run_bot_until_human(state: HandState, rng: random.Random, sid: Optional[str]
     def _run() -> None:
         ag = _bot_agent_for_session(sid) if sid else DEFAULT_BOT_AGENT
         while state.phase == "preflop" and state.actor == 1:
-            act = pick_bot_action(ag, state, rng)
-            apply_action(state, act)
+            act, bot_meta = pick_bot_action(ag, state, rng)
+            apply_action(state, act, decision_meta=bot_meta)
 
     if lock:
         with lock:
@@ -176,7 +179,7 @@ def api_new_hand():
 
 @app.route("/api/set_agent", methods=["POST"])
 def api_set_agent():
-    """Set opponent agent for this session: random | m12 | m3."""
+    """Set opponent agent for this session: random | m12 | m3 | m4."""
     sid = _ensure_session()
     body = request.get_json(silent=True) or {}
     raw = body.get("agent", DEFAULT_BOT_AGENT)

@@ -652,6 +652,50 @@ button.primary {
   }
 }
 
+.llm-reasoning {
+  margin-top: 0.75rem;
+  padding: 0.75rem 1rem;
+  background: var(--bg-elevated);
+  border-radius: var(--radius);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.llm-reasoning-summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.llm-reasoning-body {
+  margin-top: 0.65rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.llm-step {
+  padding: 0.5rem 0 0.25rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.llm-step:first-child {
+  border-top: none;
+  padding-top: 0;
+}
+
+.llm-step-title {
+  margin: 0 0 0.25rem;
+  font-size: 0.88rem;
+  color: var(--text);
+}
+
+.llm-step-reason {
+  margin: 0;
+  font-size: 0.84rem;
+  color: var(--muted);
+  white-space: pre-wrap;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .spinner {
     animation: none;

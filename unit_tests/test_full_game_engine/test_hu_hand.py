@@ -43,6 +43,18 @@ class TestStreetProgression(unittest.TestCase):
         self.assertEqual(sum(h.stacks) + h.pot, total0)
 
 
+class TestDecisionMetaHistory(unittest.TestCase):
+    def test_apply_action_stores_llm_blob_when_provided(self):
+        rng = random.Random(0)
+        h = new_hand([200, 200], rng=rng, button=0, sb_chips=10, bb_chips=20)
+        meta = {"reason": "equilibrium call", "street": "preflop"}
+        apply_action(h, {"kind": "call"}, decision_meta=meta)
+        player_events = [e for e in h.history if "player" in e]
+        self.assertTrue(player_events)
+        self.assertIn("llm", player_events[-1])
+        self.assertEqual(player_events[-1]["llm"]["reason"], "equilibrium call")
+
+
 class TestAllInRunout(unittest.TestCase):
     def test_short_all_in_call_returns_uncalled_and_runs_out(self):
         rng = random.Random(7)
