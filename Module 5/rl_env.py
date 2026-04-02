@@ -10,7 +10,7 @@ import random
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Tuple
+from typing import Callable, List, Optional, Tuple
 
 _M5 = Path(__file__).resolve().parent
 _ROOT = _M5.parent
@@ -18,7 +18,7 @@ for _p in (_ROOT, _M5):
     if str(_p) not in sys.path:
         sys.path.insert(0, str(_p))
 
-from full_game_engine.hu_hand import HandState, apply_action, legal_actions, new_hand
+from full_game_engine.hu_hand import HandState, apply_action, legal_actions, new_hand, random_legal_action
 
 from action_mapping import DISCRETE_BUCKETS, map_bucket_to_action
 from state_encoder import encode_from_hand_state
@@ -46,18 +46,25 @@ def is_betting(state: HandState) -> bool:
 
 
 def run_episode(
-    select_bucket,
+    select_bucket: Callable[..., str],
     rng: random.Random,
     stacks: List[int],
     button: int,
     sb_chips: int = 10,
     bb_chips: int = 20,
+    random_legal_seat: Optional[int] = None,
 ) -> EpisodeResult:
     """
-    Play one hand of self-play: both seats use select_bucket(state, encoded_state, hero).
+    Play one hand of self-play.
 
-    select_bucket signature: (HandState, encoded_tuple, hero:int) -> bucket str
+    ``select_bucket(state, encoded_state, hero) -> bucket str`` is used for the learning
+    policy. If ``random_legal_seat`` is 0 or 1, that seat instead picks a uniform random
+    legal engine action (no discrete bucket); those decisions are **not** recorded in
+    ``steps`` so training updates apply only to the RL seat.
     """
+    if random_legal_seat is not None and random_legal_seat not in (0, 1):
+        raise ValueError("random_legal_seat must be None, 0, or 1")
+
     state = new_hand(list(stacks), rng=rng, button=button, sb_chips=sb_chips, bb_chips=bb_chips)
     start_chips = list(state.stacks)
 
@@ -67,13 +74,16 @@ def run_episode(
         if not legal_actions(state):
             break
         hero = state.actor
-        enc = encode_from_hand_state(state, hero)
-        bucket = select_bucket(state, enc, hero)
-        if bucket not in DISCRETE_BUCKETS:
-            bucket = rng.choice(DISCRETE_BUCKETS)
-        action = map_bucket_to_action(state, bucket)
-        steps.append(StepRecord(enc=enc, bucket=bucket, hero=hero))
-        apply_action(state, action)
+        if hero == random_legal_seat:
+            apply_action(state, random_legal_action(state, rng))
+        else:
+            enc = encode_from_hand_state(state, hero)
+            bucket = select_bucket(state, enc, hero)
+            if bucket not in DISCRETE_BUCKETS:
+                bucket = rng.choice(DISCRETE_BUCKETS)
+            action = map_bucket_to_action(state, bucket)
+            steps.append(StepRecord(enc=enc, bucket=bucket, hero=hero))
+            apply_action(state, action)
 
         if state.phase == "hand_over":
             break
@@ -93,12 +103,19 @@ def random_combined_stacks(
     bb_chips: int,
     rng: random.Random,
     min_each_bb: int = 5,
+    mode: str = "uniform",
+    extreme_prob: float = 0.6,
 ) -> List[int]:
     """
     Randomly split ``total_bb`` big blinds worth of chips between both players.
 
     Total chips = ``total_bb * bb_chips`` (exact). Each player gets at least
     ``min_each_bb * bb_chips`` chips so both can post blinds and have room to act.
+
+    ``mode``:
+    - ``uniform``: uniform over valid splits.
+    - ``extreme_mix``: with probability ``extreme_prob``, sample from the low or high
+      quarter of the range (short vs deep stack skew); otherwise uniform.
 
     Use this during training to cover deep-stack vs short-stack asymmetry while keeping
     total money in play fixed (e.g. 200 BB combined for human vs bot sessions).
@@ -109,6 +126,19 @@ def random_combined_stacks(
     min_chips = min_each_bb * bb_chips
     lo = min_chips
     hi = total_chips - min_chips
-    s0 = rng.randint(lo, hi)
-    s1 = total_chips - s0
-    return [s0, s1]
+    span = hi - lo
+    if span < 0:
+        raise ValueError("invalid stack range")
+    if mode != "extreme_mix" or span == 0:
+        s0 = rng.randint(lo, hi)
+        return [s0, total_chips - s0]
+
+    if rng.random() < extreme_prob:
+        quarter = max(1, span // 4)
+        if rng.random() < 0.5:
+            s0 = rng.randint(lo, min(lo + quarter, hi))
+        else:
+            s0 = rng.randint(max(lo, hi - quarter), hi)
+    else:
+        s0 = rng.randint(lo, hi)
+    return [s0, total_chips - s0]

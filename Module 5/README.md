@@ -100,12 +100,15 @@ For **symmetric** self-play with alternating buttons, **`mean_seat_diff`** shoul
 ## Long training (`train_module5.py`)
 
 ```bash
-python3 "Module 5/train_module5.py" --episodes 10000 --save-every 500 --checkpoint "Module 5/checkpoints/policy.pkl"
+python3 "Module 5/train_module5.py" --episodes 10000 --checkpoint "Module 5/checkpoints/policy.pkl"
 python3 "Module 5/train_module5.py" --episodes 2000 --resume --checkpoint "Module 5/checkpoints/policy.pkl"
 ```
 
-- **`--save-every N`:** writes the checkpoint every `N` episodes (and **Ctrl+C** saves once).
-- **`--resume`:** loads the pickle (if present) and continues with stored **`episodes_completed`** and **dealer `final_button`**, and keeps the epsilon schedule indexed by **`--epsilon-schedule`** (default `10000`).
+- **`--save-every N`:** default `0` (save only at end of this invocation); set `N > 0` for periodic checkpoints. **Ctrl+C** saves with correct mid-chunk **`episodes_completed`**.
+- **`--resume`:** loads the pickle (if present) and continues with stored **`episodes_completed`** and **dealer `final_button`**; use the **same** **`--epsilon-schedule`** `T` when resuming long runs.
+- **`--epsilon-start` / `--epsilon-end` / `--epsilon-decay-fraction`:** linear ε over the first `(decay_fraction × T)` **global** episodes, then **`--epsilon-end`**.
+- **`--stack-sampling-mode`** (`uniform` | `extreme_mix`) and **`--stack-sampling-extreme-prob`:** random combined-stack distribution when random stacks are on.
+- **`--count-bonus-c`:** count-based exploration bonus on greedy scores (`0` disables).
 - **`--checkpoint`:** path to the policy pickle.
 
 **Starting stacks (default):** each hand samples a **random split** of **`--combined-bb-total`** (default **200 BB**) between the two players, with at least **`--min-stack-bb`** (default **5 BB**) each so both can post blinds. Total chips are always `combined_bb_total × bb_chips`. Use **`--no-random-stacks`** for the old behavior (equal **`--starting-bb-each`** per player).

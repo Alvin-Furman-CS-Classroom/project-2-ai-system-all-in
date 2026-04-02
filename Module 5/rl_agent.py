@@ -62,6 +62,35 @@ class RLPokerAgent:
         best = [b for b in lb if values.get(b, 0.0) == best_val]
         return random.choice(best)
 
+    def select_action_masked_with_bonus(
+        self,
+        state: State,
+        legal_buckets: Sequence[str],
+        visit_counts: Dict[Tuple[State, Action], int],
+        bonus_c: float,
+    ) -> Action:
+        """
+        Epsilon-greedy on legal buckets with count-based exploration bonus.
+
+        Score: Q(s,a) + bonus_c / sqrt(1 + N(s,a))
+        """
+        if bonus_c <= 0.0:
+            return self.select_action_masked(state, legal_buckets)
+        lb = [b for b in legal_buckets if b in self.actions]
+        if not lb:
+            return self.select_action(state)
+        if random.random() < self.epsilon:
+            return random.choice(lb)
+        values = self.q[state]
+        scored = []
+        for b in lb:
+            n = visit_counts.get((state, b), 0)
+            score = values.get(b, 0.0) + (bonus_c / ((1 + n) ** 0.5))
+            scored.append((b, score))
+        best_val = max(sc for _, sc in scored)
+        best = [b for b, sc in scored if sc == best_val]
+        return random.choice(best)
+
     def update(
         self,
         state: State,

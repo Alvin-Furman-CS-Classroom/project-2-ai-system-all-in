@@ -24,10 +24,12 @@ def _bucket_linear(x: float, edges: Tuple[float, ...]) -> int:
 def _encode_hole_pair(c0: Card, c1: Card) -> Tuple:
     r0, r1 = c0.rank, c1.rank
     if r0 == r1:
-        return ("pair", _bucket_linear(float(r0), (5.0, 9.0, 11.0)))
+        # Legacy/fine pair buckets: 4 bins
+        return ("pair", _bucket_linear(float(r0), (5.0, 8.0, 11.0)))
     hi, lo = max(r0, r1), min(r0, r1)
     suited = 1 if c0.suit == c1.suit else 0
-    return ("np", _bucket_linear(float(hi), (6.0, 9.0, 11.0)), _bucket_linear(float(lo), (4.0, 8.0)), suited)
+    # Legacy/fine non-pair bins: hi(4) x lo(3) x suited(2)
+    return ("np", _bucket_linear(float(hi), (6.0, 8.0, 11.0)), _bucket_linear(float(lo), (5.0, 8.0)), suited)
 
 
 def _board_feats(board: Tuple[Card, ...]) -> Tuple[int, int, int]:
@@ -47,7 +49,7 @@ def encode_from_hand_state(state: HandState, hero: int) -> Tuple:
     """
     Encode state from hero's perspective (hero is usually state.actor during training).
 
-    Uses coarse buckets to keep the Q-table tractable.
+    Uses the legacy/fine bucket granularity (pre-coarsening).
     """
     bb = float(state.bb_chips)
     hole = state.hole_cards[hero]
@@ -61,10 +63,11 @@ def encode_from_hand_state(state: HandState, hero: int) -> Tuple:
     pot_bb = state.pot / bb
     tc_bb = state.to_call(hero) / bb
 
+    # Legacy/fine numeric bins (4 bins each).
     sb = _bucket_linear(my_stack_bb, (15.0, 40.0, 100.0))
     ob = _bucket_linear(opp_stack_bb, (15.0, 40.0, 100.0))
-    pb = _bucket_linear(pot_bb, (2.0, 8.0, 20.0))
-    tb = _bucket_linear(tc_bb, (0.5, 2.0, 6.0))
+    pb = _bucket_linear(pot_bb, (2.0, 8.0, 24.0))
+    tb = _bucket_linear(tc_bb, (1.0, 3.0, 8.0))
 
     bf = _board_feats(tuple(state.board))
     return (hand, street, position, sb, ob, pb, tb, bf)

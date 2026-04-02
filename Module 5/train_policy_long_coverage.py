@@ -1,12 +1,18 @@
 #!/usr/bin/env python3
 """
-Long-run self-play training with checkpoints and optional resume.
+Long-run training: mostly self-play with a mixed random-legal opponent for broader
+state visitation (closer to coverage_report-style reachable paths).
+
+Default target is 100M episodes with periodic checkpoints; use --resume after interrupt.
 
 Example:
 
-  python3 "Module 5/train_module5.py" --episodes 5000 --save-every 500 --checkpoint "Module 5/checkpoints/policy.pkl"
+  python3 "Module 5/train_policy_long_coverage.py"
+  python3 "Module 5/train_policy_long_coverage.py" --resume --seed 42
 
-  python3 "Module 5/train_module5.py" --episodes 2000 --resume --checkpoint "Module 5/checkpoints/policy.pkl"
+Note: Tabular Q cannot guarantee full encoder coverage in finite time; this schedule
+biases training toward visiting rare (pb, tb, line) combinations while keeping
+~85% of hands as symmetric self-play.
 """
 
 from __future__ import annotations
@@ -15,6 +21,7 @@ import argparse
 import random
 import signal
 import sys
+import time
 from pathlib import Path
 
 _M5 = Path(__file__).resolve().parent
@@ -27,95 +34,74 @@ from action_mapping import DISCRETE_BUCKETS
 from rl_agent import RLPokerAgent
 from trainer import evaluate_bb_per_hand, train_self_play
 
+# --- Defaults tuned for “mostly self + coverage push” over 100M episodes ---
+
+DEFAULT_EPISODES = 100_000_000
+DEFAULT_CHECKPOINT = _M5 / "checkpoints" / "policy_100m_coverage.pkl"
+DEFAULT_SAVE_EVERY = 500_000
+# ~85% hands: both seats RL; ~15%: one seat random legal (seat chosen uniformly).
+DEFAULT_RANDOM_LEGAL_OPPONENT_PROB = 0.15
+# Decay epsilon over the first half of the global schedule, then hold epsilon_end.
+DEFAULT_EPSILON_SCHEDULE = DEFAULT_EPISODES
+DEFAULT_EPSILON_DECAY_FRACTION = 0.5
+DEFAULT_EPSILON_START = 0.2
+DEFAULT_EPSILON_END = 0.02
+# Wider stack buckets + short/deep tails → more (sb, ob) encoder coverage.
+DEFAULT_STACK_MODE = "extreme_mix"
+DEFAULT_STACK_EXTREME_PROB = 0.6
+
 
 def _parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="Train Module 5 RL agent (self-play on full_game_engine).")
-    p.add_argument("--episodes", type=int, default=1000, help="Episodes to run this invocation")
-    p.add_argument(
-        "--checkpoint",
-        type=Path,
-        default=_M5 / "checkpoints" / "policy.pkl",
-        help="Policy pickle path (save / resume)",
+    p = argparse.ArgumentParser(
+        description="Module 5: 100M-episode-style training with random-legal mix (see module docstring).",
     )
-    p.add_argument(
-        "--save-every",
-        type=int,
-        default=0,
-        metavar="N",
-        help="Save checkpoint every N episodes within this run (0 = only save at end of run)",
-    )
-    p.add_argument(
-        "--resume",
-        action="store_true",
-        help="Load checkpoint if it exists and continue (uses stored episodes_completed + button)",
-    )
-    p.add_argument("--seed", type=int, default=None, help="RNG seed (default: nondeterministic)")
-    p.add_argument("--starting-bb-each", type=int, default=100, help="Each player's BB when using equal stacks (--no-random-stacks)")
-    p.add_argument(
-        "--no-random-stacks",
-        action="store_true",
-        help="Equal stacks for both players (--starting-bb-each each); default is random split of combined total",
-    )
-    p.add_argument(
-        "--combined-bb-total",
-        type=int,
-        default=200,
-        metavar="BB",
-        help="Total BB in play (both stacks sum to this) when using random stacks",
-    )
-    p.add_argument(
-        "--min-stack-bb",
-        type=int,
-        default=5,
-        metavar="BB",
-        help="Minimum stack each player when randomizing (so both can post blinds)",
-    )
+    p.add_argument("--episodes", type=int, default=DEFAULT_EPISODES, metavar="N", help="Total episodes (this run + prior if --resume)")
+    p.add_argument("--checkpoint", type=Path, default=DEFAULT_CHECKPOINT, help="Policy pickle path")
+    p.add_argument("--save-every", type=int, default=DEFAULT_SAVE_EVERY, metavar="N", help="Checkpoint every N episodes (required for long runs)")
+    p.add_argument("--resume", action="store_true", help="Continue from checkpoint (episodes_completed + button)")
+    p.add_argument("--seed", type=int, default=None)
+    p.add_argument("--combined-bb-total", type=int, default=200, metavar="BB")
+    p.add_argument("--min-stack-bb", type=int, default=5, metavar="BB")
     p.add_argument("--bb-chips", type=int, default=20)
     p.add_argument("--sb-chips", type=int, default=10)
     p.add_argument(
+        "--random-legal-opponent-prob",
+        type=float,
+        default=DEFAULT_RANDOM_LEGAL_OPPONENT_PROB,
+        metavar="P",
+        help="Per-episode P(one seat plays random legal for the hand); rest is self-play",
+    )
+    p.add_argument(
         "--epsilon-schedule",
         type=int,
-        default=10_000,
+        default=DEFAULT_EPSILON_SCHEDULE,
         metavar="T",
-        help="Global schedule length T for epsilon decay; use same T when resuming long runs",
+        help="Global epsilon decay horizon (match --episodes for long decay)",
     )
-    p.add_argument("--epsilon-start", type=float, default=0.2, help="Epsilon at start of decay window")
-    p.add_argument("--epsilon-end", type=float, default=0.02, help="Epsilon after decay completes")
+    p.add_argument("--epsilon-start", type=float, default=DEFAULT_EPSILON_START)
+    p.add_argument("--epsilon-end", type=float, default=DEFAULT_EPSILON_END)
     p.add_argument(
         "--epsilon-decay-fraction",
         type=float,
-        default=0.7,
-        help="Linear decay over first (fraction * T) global episodes, then epsilon-end",
+        default=DEFAULT_EPSILON_DECAY_FRACTION,
+        help="Linear decay over first (fraction * epsilon-schedule) global episodes",
     )
     p.add_argument(
         "--stack-sampling-mode",
         choices=["uniform", "extreme_mix"],
-        default="uniform",
-        help="How random combined stacks are sampled when random stacks are enabled",
+        default=DEFAULT_STACK_MODE,
     )
-    p.add_argument(
-        "--stack-sampling-extreme-prob",
-        type=float,
-        default=0.6,
-        help="With extreme_mix, probability of sampling from short/deep tail bands",
-    )
+    p.add_argument("--stack-sampling-extreme-prob", type=float, default=DEFAULT_STACK_EXTREME_PROB)
     p.add_argument(
         "--count-bonus-c",
         type=float,
-        default=0.0,
-        help="Count-based exploration bonus (0 disables); adds bonus_c/sqrt(1+N(s,a)) to greedy scores",
+        default=0.05,
+        help="Count-based exploration bonus (0 disables)",
     )
-    p.add_argument("--eval-episodes", type=int, default=200)
-    p.add_argument("--no-eval", action="store_true", help="Skip greedy eval at end")
     p.add_argument("--alpha", type=float, default=0.1)
     p.add_argument("--gamma", type=float, default=0.95)
-    p.add_argument(
-        "--random-legal-opponent-prob",
-        type=float,
-        default=0.0,
-        metavar="P",
-        help="Per-episode probability that one random seat uses random legal actions; the other uses RL (0=off)",
-    )
+    p.add_argument("--eval-episodes", type=int, default=500)
+    p.add_argument("--no-eval", action="store_true", help="Skip greedy eval when the run finishes")
     return p.parse_args()
 
 
@@ -124,7 +110,6 @@ def main() -> None:
     rng = random.Random(args.seed) if args.seed is not None else random.Random()
 
     checkpoint: Path = args.checkpoint
-    extra: dict = {}
     episodes_completed = 0
     button = 0
 
@@ -141,12 +126,14 @@ def main() -> None:
             actions=list(DISCRETE_BUCKETS),
             alpha=args.alpha,
             gamma=args.gamma,
-            epsilon=0.2,
+            epsilon=args.epsilon_start,
         )
 
-    episode_index_start = episodes_completed
-    remaining = max(0, args.episodes)
-    save_every = max(0, args.save_every)
+    target_total = max(0, args.episodes)
+    remaining = max(0, target_total - episodes_completed)
+    save_every = max(1, args.save_every)
+    rlo = max(0.0, min(1.0, args.random_legal_opponent_prob))
+    sched = max(1, args.epsilon_schedule)
 
     live_progress: dict[str, int] = {
         "episodes_done": episodes_completed,
@@ -154,7 +141,6 @@ def main() -> None:
     }
 
     def save_now(reason: str) -> None:
-        nonlocal episodes_completed, button
         agent.save(
             checkpoint,
             extra={
@@ -181,25 +167,17 @@ def main() -> None:
 
     signal.signal(signal.SIGINT, on_sigint)
 
-    randomize = not args.no_random_stacks
-    stack_desc = (
-        f"random split of {args.combined_bb_total} BB total"
-        if randomize
-        else f"equal {args.starting_bb_each} BB each"
-    )
-    rlo = max(0.0, min(1.0, args.random_legal_opponent_prob))
     print(
-        f"Training {remaining} episodes (epsilon_schedule={args.epsilon_schedule}, "
-        f"episode_index_start={episode_index_start}, stacks={stack_desc}, "
-        f"random_legal_opponent_prob={rlo})..."
+        f"Long coverage training: up to {target_total} total episodes "
+        f"({remaining} remaining), save_every={save_every}, "
+        f"random_legal_opponent_prob={rlo}, stack_mode={args.stack_sampling_mode}, "
+        f"epsilon_schedule={sched}, |Q|={len(agent.q)}"
     )
+    t0 = time.perf_counter()
 
+    episode_index_start = episodes_completed
     while remaining > 0:
-        if save_every > 0:
-            chunk = min(save_every, remaining)
-        else:
-            chunk = remaining
-
+        chunk = min(save_every, remaining)
         live_progress["episodes_done"] = episode_index_start
         live_progress["button"] = int(button) & 1
 
@@ -207,7 +185,7 @@ def main() -> None:
             agent,
             episodes=chunk,
             rng=rng,
-            starting_bb_each=args.starting_bb_each,
+            starting_bb_each=100,
             bb_chips=args.bb_chips,
             sb_chips=args.sb_chips,
             epsilon_start=args.epsilon_start,
@@ -217,8 +195,8 @@ def main() -> None:
             use_monte_carlo=True,
             initial_button=button,
             episode_index_start=episode_index_start,
-            epsilon_schedule_total=args.epsilon_schedule,
-            randomize_stacks=randomize,
+            epsilon_schedule_total=sched,
+            randomize_stacks=True,
             combined_bb_total=args.combined_bb_total,
             min_stack_bb_each=args.min_stack_bb,
             stack_sampling_mode=args.stack_sampling_mode,
@@ -231,28 +209,33 @@ def main() -> None:
         episodes_completed += chunk
         remaining -= chunk
 
-        if save_every > 0 and remaining >= 0:
-            save_now(f"every {save_every} episodes")
-
-    if save_every <= 0:
-        save_now("end of run")
+        elapsed = time.perf_counter() - t0
+        eps_per_s = episodes_completed / elapsed if elapsed > 0 else 0.0
+        print(
+            f"progress: episodes_completed={episodes_completed} "
+            f"|Q|={len(agent.q)} "
+            f"({eps_per_s:.1f} ep/s elapsed {elapsed/3600:.2f}h)"
+        )
+        save_now(f"every {save_every} episodes")
 
     if not args.no_eval:
         ev = evaluate_bb_per_hand(
             agent,
             episodes=args.eval_episodes,
             rng=random.Random((args.seed or 0) + 999),
-            starting_bb_each=args.starting_bb_each,
+            starting_bb_each=100,
             bb_chips=args.bb_chips,
             sb_chips=args.sb_chips,
-            randomize_stacks=randomize,
+            randomize_stacks=True,
             combined_bb_total=args.combined_bb_total,
             min_stack_bb_each=args.min_stack_bb,
             stack_sampling_mode=args.stack_sampling_mode,
             stack_sampling_extreme_prob=args.stack_sampling_extreme_prob,
         )
-        print(f"Greedy eval ({args.eval_episodes} hands): seat0={ev.mean_seat0:.4f}, seat1={ev.mean_seat1:.4f}, "
-              f"seat0-seat1={ev.mean_seat_diff:.4f}")
+        print(
+            f"Greedy eval ({args.eval_episodes} hands): seat0={ev.mean_seat0:.4f}, seat1={ev.mean_seat1:.4f}, "
+            f"seat0-seat1={ev.mean_seat_diff:.4f}"
+        )
 
     print("Done.")
 

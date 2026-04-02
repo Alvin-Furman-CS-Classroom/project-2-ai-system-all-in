@@ -6,6 +6,7 @@ Session agent id: ``rl`` (tabular Q policy) or ``m4`` (Ollama-backed legal index
 
 from __future__ import annotations
 
+import os
 import random
 import sys
 from pathlib import Path
@@ -37,11 +38,11 @@ def normalize_agent(name: Optional[str]) -> str:
 
 
 def _load_rl_agent() -> Optional[RLPokerAgent]:
-    """Load the RL policy from Module 5/checkpoints/my_policy.pkl (epsilon=0 for play)."""
+    """Load RL policy (epsilon=0). Override with RL_POLICY_PATH env var."""
     global _RL_AGENT
     if _RL_AGENT is not None:
         return _RL_AGENT
-    ckpt = M5 / "checkpoints" / "my_policy.pkl"
+    ckpt = Path(os.environ.get("RL_POLICY_PATH", str(M5 / "checkpoints" / "fine_1b_2phase.pkl")))
     if not ckpt.exists():
         return None
     try:

@@ -6,9 +6,10 @@ from __future__ import annotations
 
 import random
 import sys
+from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, List, Optional, Tuple
+from typing import Dict, Iterable, List, MutableMapping, Optional, Tuple
 
 _M5 = Path(__file__).resolve().parent
 _ROOT = _M5.parent
@@ -80,6 +81,11 @@ def train_self_play(
     randomize_stacks: bool = False,
     combined_bb_total: int = 200,
     min_stack_bb_each: int = 5,
+    stack_sampling_mode: str = "uniform",
+    stack_sampling_extreme_prob: float = 0.6,
+    count_bonus_c: float = 0.0,
+    live_progress: Optional[MutableMapping[str, int]] = None,
+    random_legal_opponent_prob: float = 0.0,
 ) -> Tuple[List[float], int]:
     """
     Run self-play episodes; both seats share the same policy.
@@ -101,32 +107,65 @@ def train_self_play(
     **Stack randomization:** if ``randomize_stacks`` is True, each hand samples a random split of
     ``combined_bb_total`` BB between the two players (see ``random_combined_stacks``). Otherwise
     both start with ``starting_bb_each`` BB (legacy behavior).
+
+    **Random-legal opponent:** if ``random_legal_opponent_prob`` > 0, each episode with that
+    probability picks one seat uniformly to play ``random_legal_action`` for the whole hand;
+    the other seat uses the RL policy. Only the RL seat's decisions are recorded and updated.
+
+    **live_progress:** if provided, updated each episode with ``episodes_done`` (global count)
+    and ``button`` (next dealer) for accurate interrupt checkpoints.
     """
     rng = rng or random.Random()
     seat0_bb: List[float] = []
     button = initial_button & 1
     sched = epsilon_schedule_total if epsilon_schedule_total is not None else episodes
+    visit_counts: Dict[Tuple[object, str], int] = defaultdict(int)
 
     for ep in range(episodes):
         global_ep = episode_index_start + ep
         agent.epsilon = epsilon_for_episode(global_ep, sched, epsilon_start, epsilon_end, decay_fraction)
         if randomize_stacks:
-            stacks = random_combined_stacks(combined_bb_total, bb_chips, rng, min_stack_bb_each)
+            stacks = random_combined_stacks(
+                combined_bb_total,
+                bb_chips,
+                rng,
+                min_stack_bb_each,
+                mode=stack_sampling_mode,
+                extreme_prob=stack_sampling_extreme_prob,
+            )
         else:
             stacks = new_starting_stacks(starting_bb_each, bb_chips)
 
         def select(state, enc, hero: int) -> str:
             if use_masked_exploration:
-                return agent.select_action_masked(enc, legal_buckets(state))
+                return agent.select_action_masked_with_bonus(
+                    enc,
+                    legal_buckets(state),
+                    visit_counts=visit_counts,
+                    bonus_c=count_bonus_c,
+                )
             return agent.select_action(enc)
 
-        res = run_episode(select, rng, stacks, button, sb_chips=sb_chips, bb_chips=bb_chips)
+        rls = None
+        if random_legal_opponent_prob > 0.0 and rng.random() < random_legal_opponent_prob:
+            rls = rng.randint(0, 1)
+
+        res = run_episode(
+            select,
+            rng,
+            stacks,
+            button,
+            sb_chips=sb_chips,
+            bb_chips=bb_chips,
+            random_legal_seat=rls,
+        )
 
         r0, r1 = res.stacks_delta_bb
         if use_monte_carlo:
             for step in res.steps:
                 g = r0 if step.hero == 0 else r1
                 agent.update_monte_carlo(step.enc, step.bucket, g)
+                visit_counts[(step.enc, step.bucket)] += 1
         else:
             for i, step in enumerate(res.steps):
                 g = r0 if step.hero == 0 else r1
@@ -136,9 +175,14 @@ def train_self_play(
                 else:
                     nxt = res.steps[i + 1].enc
                     agent.update(step.enc, step.bucket, 0.0, nxt, False)
+                visit_counts[(step.enc, step.bucket)] += 1
 
         seat0_bb.append(r0)
         button = 1 - button
+
+        if live_progress is not None:
+            live_progress["episodes_done"] = episode_index_start + ep + 1
+            live_progress["button"] = int(button) & 1
 
     return seat0_bb, button
 
@@ -154,6 +198,8 @@ def evaluate_bb_per_hand(
     randomize_stacks: bool = False,
     combined_bb_total: int = 200,
     min_stack_bb_each: int = 5,
+    stack_sampling_mode: str = "uniform",
+    stack_sampling_extreme_prob: float = 0.6,
 ) -> EvalBBPerHand:
     """
     Greedy play (epsilon=0): mean BB/hand per seat, combined average, and seat0−seat1.
@@ -170,7 +216,14 @@ def evaluate_bb_per_hand(
 
     for _ in range(episodes):
         if randomize_stacks:
-            stacks = random_combined_stacks(combined_bb_total, bb_chips, rng, min_stack_bb_each)
+            stacks = random_combined_stacks(
+                combined_bb_total,
+                bb_chips,
+                rng,
+                min_stack_bb_each,
+                mode=stack_sampling_mode,
+                extreme_prob=stack_sampling_extreme_prob,
+            )
         else:
             stacks = new_starting_stacks(starting_bb_each, bb_chips)
 

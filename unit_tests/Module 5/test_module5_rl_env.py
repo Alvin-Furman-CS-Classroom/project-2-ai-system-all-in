@@ -81,6 +81,35 @@ class TestSaveLoad(unittest.TestCase):
         self.assertEqual(b._training_extra.get("final_button"), 1)
 
 
+class TestRunEpisodeRandomOpponent(unittest.TestCase):
+    def test_random_legal_seat_only_records_rl_moves(self):
+        rng = random.Random(3)
+
+        def select(_state, _enc, _hero):
+            return "check_call"
+
+        res = run_episode(
+            select,
+            rng,
+            [400, 400],
+            button=0,
+            random_legal_seat=1,
+        )
+        self.assertTrue(all(step.hero == 0 for step in res.steps))
+
+    def test_train_with_random_legal_opponent_prob(self):
+        rng = random.Random(11)
+        agent = RLPokerAgent(actions=list(DISCRETE_BUCKETS), epsilon=0.0)
+        train_self_play(
+            agent,
+            episodes=8,
+            rng=rng,
+            starting_bb_each=60,
+            random_legal_opponent_prob=1.0,
+        )
+        self.assertGreater(len(agent.q), 0)
+
+
 class TestTrainSelfPlayReturn(unittest.TestCase):
     def test_returns_seat_bb_and_button(self):
         rng = random.Random(0)
