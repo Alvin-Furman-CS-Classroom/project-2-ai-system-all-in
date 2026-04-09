@@ -1,17 +1,24 @@
 """
-Monte Carlo simulator for pre-flop opening actions.
+Monte Carlo simulator for opening-action EV estimation.
 
-Runs many simulated trials (random opponent actions and hand outcomes) to estimate
-the value of an opening action. 
+Preflop equity comes from ``docs/POKER_HAND_WIN_PERCENTAGES.md``. When hole cards and
+a non-empty board are supplied (e.g. full-game postflop), equity vs villain
+continuation uses board-aware *conditioned* ranges (call vs raise) with importance
+sampling instead of a single preflop discount heuristic.
 """
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
-from typing import Tuple, Dict, Optional, List
+from typing import Tuple, Dict, Optional, List, Any, Callable
 import math
 import random
 import re
+
+_PROJECT_ROOT = str(Path(__file__).resolve().parent.parent)
+if _PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, _PROJECT_ROOT)
 
 
 # Opponent tendency base probability tables (fold, call, raise) for a "standard" open.
@@ -243,6 +250,187 @@ def _get_adjusted_opponent_probs(
     }
 
 
+def _full_deck_cards() -> List[Any]:
+    """All 52 cards as ``full_game_engine.cards.Card`` instances."""
+    from full_game_engine.cards import Card
+
+    return [Card(r, s) for r in range(13) for s in range(4)]
+
+
+def monte_carlo_equity_vs_random_hand(
+    hero_hole: Tuple[Any, Any],
+    board: List[Any],
+    rng: random.Random,
+    num_samples: int,
+) -> float:
+    """
+    Estimate hero equity (win rate + half chops) vs a uniformly random villain hand,
+    with random completion of the board if fewer than five cards are known.
+
+    Uses ``compare_at_showdown`` from the full-game engine so board texture matters.
+    Hole/board cards are normalized to ``full_game_engine.cards.Card`` so deck exclusion
+    works even when callers pass compatible card types from another package.
+
+    Kept for diagnostics and comparisons; ``run_simulation`` postflop uses
+    :func:`monte_carlo_equity_vs_conditioned_range` instead.
+    """
+    if num_samples <= 0:
+        return 0.5
+    from full_game_engine.cards import Card as FE_Card
+    from full_game_engine.hand_eval import compare_at_showdown
+
+    def _norm(c: Any) -> Any:
+        return FE_Card(int(c.rank), int(c.suit))
+
+    hero_hole = (_norm(hero_hole[0]), _norm(hero_hole[1]))
+    board = [_norm(c) for c in board]
+
+    wins = 0.0
+    done = 0
+    for _ in range(num_samples):
+        used = {hero_hole[0], hero_hole[1], *board}
+        deck = [c for c in _full_deck_cards() if c not in used]
+        rng.shuffle(deck)
+        if len(deck) < 2:
+            break
+        v0, v1 = deck[0], deck[1]
+        rest = deck[2:]
+        full_board = list(board)
+        need = 5 - len(full_board)
+        if need > 0:
+            if len(rest) < need:
+                break
+            full_board.extend(rest[:need])
+        cmp_ = compare_at_showdown(hero_hole, (v0, v1), full_board)
+        done += 1
+        if cmp_ == 1:
+            wins += 1.0
+        elif cmp_ == 0:
+            wins += 0.5
+    return wins / done if done > 0 else 0.5
+
+
+def _norm_fe_card(c: Any) -> Any:
+    from full_game_engine.cards import Card as FE_Card
+
+    return FE_Card(int(c.rank), int(c.suit))
+
+
+def _villain_hand_postflop_score(hole: Tuple[Any, Any], board: List[Any]) -> float:
+    """
+    Map villain hole + board to [0, 1] for soft range weighting (made strength + draws).
+    """
+    from full_game_engine.hand_eval import best_hand_strength
+
+    if len(board) < 3:
+        return 0.5
+    cat, _tb = best_hand_strength(hole, board)
+    s = cat / 8.0
+    allc = list(hole) + list(board)
+    for suit in range(4):
+        cnt = sum(1 for c in allc if c.suit == suit)
+        if cnt >= 4:
+            s += 0.09
+        elif cnt == 3:
+            s += 0.045
+    ranks = sorted([c.rank for c in allc], reverse=True)
+    uniq = sorted(set(ranks), reverse=True)
+    if len(uniq) >= 4:
+        for i in range(len(uniq) - 3):
+            window = uniq[i : i + 4]
+            if len(window) == 4 and window[0] - window[3] == 3:
+                s += 0.05
+                break
+    return max(0.0, min(1.0, s))
+
+
+def _continuing_range_weight(
+    score: float,
+    villain_mode: str,
+    opponent_tendency: str,
+    bet_size: float,
+) -> float:
+    """
+    Soft weight for including a villain hand in call vs raise continuing ranges.
+    Raise ranges concentrate on higher scores; larger bets tighten both.
+    """
+    adj = _bet_size_adjustment(max(bet_size, 0.25))
+    pressure = 0.25 + 0.75 * adj
+    tight = {
+        "Tight": 1.12,
+        "Loose": 0.88,
+        "Aggressive": 0.94,
+        "Passive": 1.06,
+        "Unknown": 1.0,
+    }.get(opponent_tendency, 1.0)
+    t_call = (0.26 + 0.1 * pressure) * tight
+    t_raise = (0.48 + 0.12 * pressure) * tight
+    if villain_mode == "call":
+        return max(1e-9, _logistic(8.0 * (score - t_call)))
+    if villain_mode == "raise":
+        return max(1e-9, _logistic(10.5 * (score - t_raise)))
+    return max(1e-9, _logistic(8.0 * (score - t_call)))
+
+
+def monte_carlo_equity_vs_conditioned_range(
+    hero_hole: Tuple[Any, Any],
+    board: List[Any],
+    villain_mode: str,
+    opponent_tendency: str,
+    bet_size: float,
+    rng: random.Random,
+    num_samples: int,
+) -> float:
+    """
+    Hero equity vs a board-aware *conditioned* villain range (call or raise),
+    using importance sampling: uniform villain holes weighted by
+    ``_continuing_range_weight`` on a simple postflop strength score.
+    """
+    from full_game_engine.hand_eval import compare_at_showdown
+
+    if num_samples <= 0:
+        return 0.5
+    hero_hole = (_norm_fe_card(hero_hole[0]), _norm_fe_card(hero_hole[1]))
+    board = [_norm_fe_card(c) for c in board]
+
+    used = {hero_hole[0], hero_hole[1], *board}
+    deck = [c for c in _full_deck_cards() if c not in used]
+    n = len(deck)
+    if n < 2:
+        return 0.5
+
+    sum_w = 0.0
+    sum_wx = 0.0
+    done = 0
+    for _ in range(num_samples):
+        ia, ib = rng.sample(range(n), 2)
+        v0, v1 = deck[ia], deck[ib]
+        hole_v = (v0, v1)
+        sc = _villain_hand_postflop_score(hole_v, board)
+        w = _continuing_range_weight(
+            sc, villain_mode, opponent_tendency, bet_size
+        )
+        remaining = [c for c in deck if c not in hole_v]
+        rng.shuffle(remaining)
+        full_board = list(board)
+        need = 5 - len(full_board)
+        if need > 0:
+            if len(remaining) < need:
+                break
+            full_board.extend(remaining[:need])
+        cmp_ = compare_at_showdown(hero_hole, hole_v, full_board)
+        done += 1
+        if cmp_ == 1:
+            x = 1.0
+        elif cmp_ == 0:
+            x = 0.5
+        else:
+            x = 0.0
+        sum_w += w
+        sum_wx += w * x
+    return sum_wx / sum_w if sum_w > 0 and done > 0 else 0.5
+
+
 def _sample_opponent_action(
     opponent_tendency: str,
     bet_size: float,
@@ -272,6 +460,8 @@ def run_trial(
     opponent_tendency: str,
     pot_size: float = 1.5,
     rng: Optional[random.Random] = None,
+    equity_override: Optional[float] = None,
+    postflop_equity_getter: Optional[Callable[[str, float], float]] = None,
 ) -> float:
     """
     Run a single Monte Carlo trial for a given opening action.
@@ -292,6 +482,27 @@ def run_trial(
 
     if action == "fold" or bet_size <= 0.0:
         return 0.0
+
+    def _base_equity() -> float:
+        if equity_override is not None:
+            return float(equity_override)
+        return get_hand_equity(hand)
+
+    def _equity_vs_continue(
+        opponent_action: str,
+        size_bb: float,
+        base: float,
+    ) -> float:
+        """Preflop: discount vs continuing range. Postflop: use conditioned MC equity only."""
+        if postflop_equity_getter is not None:
+            mode = "raise" if opponent_action == "raise" else "call"
+            return float(postflop_equity_getter(mode, size_bb))
+        return _effective_equity_vs_continuing_range(
+            base_equity=base,
+            opponent_action=opponent_action,
+            opponent_tendency=opponent_tendency,
+            bet_size=size_bb,
+        )
 
     # Sample opponent response with bet-size–dependent probabilities
     opponent_action = _sample_opponent_action(opponent_tendency, bet_size, rng)
@@ -316,13 +527,8 @@ def run_trial(
             # If hero calls, final pot becomes: pot_before_call + call_additional = pot_size + 2*raise_to
             required_equity = call_additional / (pot_before_call + call_additional)
 
-            base_equity = get_hand_equity(hand)
-            equity = _effective_equity_vs_continuing_range(
-                base_equity=base_equity,
-                opponent_action="raise",
-                opponent_tendency=opponent_tendency,
-                bet_size=raise_to,
-            )
+            base_equity = _base_equity()
+            equity = _equity_vs_continue("raise", raise_to, base_equity)
             if equity < required_equity:
                 # Fold to the raise: lose our open
                 return -bet_size
@@ -336,13 +542,8 @@ def run_trial(
             return lose_payoff
 
     # Call: go to showdown
-    base_equity = get_hand_equity(hand)
-    equity = _effective_equity_vs_continuing_range(
-        base_equity=base_equity,
-        opponent_action="call",
-        opponent_tendency=opponent_tendency,
-        bet_size=bet_size,
-    )
+    base_equity = _base_equity()
+    equity = _equity_vs_continue("call", bet_size, base_equity)
     total_pot = pot_size + 2.0 * bet_size
     win_payoff = total_pot - bet_size  # profit relative to starting stack
     lose_payoff = -bet_size
@@ -362,10 +563,16 @@ def run_simulation(
     num_trials: int = 1000,
     pot_size: float = 1.5,
     seed: Optional[int] = None,
+    hero_hole: Optional[Tuple[Any, Any]] = None,
+    board: Optional[List[Any]] = None,
 ) -> Dict:
     """
     Run num_trials Monte Carlo trials for (hand, action, bet_size) and return
     sample mean value, standard deviation, and 95% confidence interval.
+
+    When ``hero_hole`` and ``board`` are provided and ``board`` is non-empty,
+    equity uses board-aware *conditioned* villain ranges for call vs raise
+    (importance sampling), with per-(mode,bet_size) caching inside this run.
     """
     if num_trials <= 0:
         return {
@@ -378,6 +585,30 @@ def run_simulation(
     rng = random.Random(seed)
     values: List[float] = []
 
+    postflop_equity_getter: Optional[Callable[[str, float], float]] = None
+    if hero_hole is not None and board is not None and len(board) > 0:
+        cache: Dict[Tuple[str, float], float] = {}
+
+        def postflop_equity_getter_fn(mode: str, bs: float) -> float:
+            key = (mode, round(float(bs), 4))
+            if key not in cache:
+                if mode == "call":
+                    n_s = min(48, max(14, num_trials))
+                else:
+                    n_s = min(56, max(18, num_trials + 8))
+                cache[key] = monte_carlo_equity_vs_conditioned_range(
+                    hero_hole,
+                    list(board),
+                    villain_mode=mode,
+                    opponent_tendency=opponent_tendency,
+                    bet_size=float(bs),
+                    rng=rng,
+                    num_samples=n_s,
+                )
+            return cache[key]
+
+        postflop_equity_getter = postflop_equity_getter_fn
+
     for _ in range(num_trials):
         v = run_trial(
             hand=hand,
@@ -388,6 +619,8 @@ def run_simulation(
             opponent_tendency=opponent_tendency,
             pot_size=pot_size,
             rng=rng,
+            equity_override=None,
+            postflop_equity_getter=postflop_equity_getter,
         )
         values.append(v)
 

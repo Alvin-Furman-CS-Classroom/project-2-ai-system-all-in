@@ -6,7 +6,7 @@ Calculates the expected value of a bet size given hand, position, stack sizes, a
 import logging
 import sys
 from pathlib import Path
-from typing import Tuple, Optional
+from typing import Tuple, Optional, Dict, Any
 import re
 
 # Add parent directory to path to access docs (guard against duplicates)
@@ -66,6 +66,15 @@ BET_SIZE_ADJUSTMENTS = {
 }
 
 
+STREET_BASE_MULTIPLIERS = {
+    # Postflop populations generally fold less to single bets than preflop.
+    "preflop": (1.00, 1.00, 1.00),  # fold, call, raise
+    "flop": (0.95, 1.05, 1.00),
+    "turn": (0.90, 1.05, 1.05),
+    "river": (0.85, 1.00, 1.15),
+}
+
+
 def _get_bet_size_category(bet_size: float) -> str:
     """Return 'small', 'medium', or 'large' based on bet size in BB."""
     if bet_size <= BET_SIZE_SMALL_MAX:
@@ -78,6 +87,9 @@ def _get_bet_size_category(bet_size: float) -> str:
 def _get_adjusted_opponent_probs(
     opponent_tendency: str,
     bet_size: float,
+    street: str = "preflop",
+    board_features: Optional[Dict[str, Any]] = None,
+    spr: Optional[float] = None,
 ) -> dict[str, float]:
     """
     Get opponent probabilities adjusted for bet size category.
@@ -94,6 +106,41 @@ def _get_adjusted_opponent_probs(
     fold_prob = opp_probs["fold"] * mult_fold
     call_prob = opp_probs["call"] * mult_call
     raise_prob = opp_probs["raise"] * mult_raise
+
+    street_key = street.strip().lower()
+    s_fold, s_call, s_raise = STREET_BASE_MULTIPLIERS.get(
+        street_key, STREET_BASE_MULTIPLIERS["preflop"]
+    )
+    fold_prob *= s_fold
+    call_prob *= s_call
+    raise_prob *= s_raise
+
+    # SPR-aware pressure profile.
+    if spr is not None:
+        if spr <= 2.0:
+            # Low SPR: fewer folds, more stack-off dynamics.
+            fold_prob *= 0.90
+            call_prob *= 1.05
+            raise_prob *= 1.05
+        elif spr >= 8.0:
+            fold_prob *= 1.05
+            call_prob *= 1.00
+            raise_prob *= 0.95
+
+    # Lightweight board-texture adjustment.
+    bf = board_features or {}
+    if bf.get("wet", False):
+        fold_prob *= 0.95
+        call_prob *= 1.00
+        raise_prob *= 1.10
+    if bf.get("flush_draw", False):
+        fold_prob *= 0.95
+        call_prob *= 1.03
+        raise_prob *= 1.02
+    if bf.get("paired", False):
+        fold_prob *= 1.03
+        call_prob *= 1.00
+        raise_prob *= 0.97
     
     # Renormalize to sum to 1
     total = fold_prob + call_prob + raise_prob
@@ -223,7 +270,11 @@ def calculate_ev(
     opponent_tendency: str,
     pot_size: float = BASE_POT_SIZE,
     opponent_bet_size: Optional[float] = None,
-    action: str = "open"
+    action: str = "open",
+    street: str = "preflop",
+    board_features: Optional[Dict[str, Any]] = None,
+    spr: Optional[float] = None,
+    equity_override: Optional[float] = None,
 ) -> float:
     """
     Calculate expected value (EV) of a bet size or action.
@@ -267,13 +318,20 @@ def calculate_ev(
     # Small bets (2x-2.5x): more calls, fewer folds
     # Medium bets (3x-4x): base probabilities
     # Large bets (5x+): more folds, fewer calls
-    opp_probs = _get_adjusted_opponent_probs(opponent_tendency, our_investment)
+    opp_probs = _get_adjusted_opponent_probs(
+        opponent_tendency,
+        our_investment,
+        street=street,
+        board_features=board_features,
+        spr=spr,
+    )
     fold_prob = opp_probs["fold"]
     call_prob = opp_probs["call"]
     raise_prob = opp_probs["raise"]
     
     # Get hand equity
-    equity = get_hand_equity(hand)
+    equity = equity_override if equity_override is not None else get_hand_equity(hand)
+    equity = max(0.05, min(0.95, equity))
     
     # EV component 1: Opponent folds
     # We win the pot without further investment
@@ -352,7 +410,11 @@ def calculate_ev_for_bet_sizes(
     opponent_tendency: str,
     pot_size: float = BASE_POT_SIZE,
     opponent_bet_size: Optional[float] = None,
-    action: str = "open"
+    action: str = "open",
+    street: str = "preflop",
+    board_features: Optional[Dict[str, Any]] = None,
+    spr: Optional[float] = None,
+    equity_override: Optional[float] = None,
 ) -> list[Tuple[float, float]]:
     """
     Calculate EV for multiple bet sizes or actions.
@@ -374,7 +436,11 @@ def calculate_ev_for_bet_sizes(
     for bet_size in bet_sizes:
         ev = calculate_ev(
             bet_size, hand, position, stack_sizes, opponent_tendency,
-            pot_size, opponent_bet_size, action
+            pot_size, opponent_bet_size, action,
+            street=street,
+            board_features=board_features,
+            spr=spr,
+            equity_override=equity_override,
         )
         results.append((bet_size, ev))
     
@@ -408,7 +474,11 @@ def calculate_ev_call(
     stack_sizes: Tuple[int, int],
     opponent_tendency: str,
     opponent_bet_size: float,
-    pot_size: float = BASE_POT_SIZE
+    pot_size: float = BASE_POT_SIZE,
+    street: str = "preflop",
+    board_features: Optional[Dict[str, Any]] = None,
+    spr: Optional[float] = None,
+    equity_override: Optional[float] = None,
 ) -> float:
     """
     Calculate EV of calling opponent's bet.
@@ -434,5 +504,9 @@ def calculate_ev_call(
         opponent_tendency=opponent_tendency,
         pot_size=pot_size,
         opponent_bet_size=opponent_bet_size,
-        action="call"
+        action="call",
+        street=street,
+        board_features=board_features,
+        spr=spr,
+        equity_override=equity_override,
     )

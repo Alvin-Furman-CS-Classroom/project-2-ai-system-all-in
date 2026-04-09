@@ -16,9 +16,7 @@ _module2_dir = str(Path(__file__).parent)
 if _module2_dir not in sys.path:
     sys.path.insert(0, _module2_dir)
 from ev_calculator import calculate_ev, calculate_ev_call, calculate_ev_fold
-from bet_size_discretization import (
-    get_bet_sizes_for_scenario, get_action_type, is_all_in
-)
+from bet_size_discretization import get_bet_sizes_for_scenario, get_action_type
 from heuristic import heuristic_hand_strength_based, get_heuristic
 
 logger = logging.getLogger(__name__)
@@ -54,6 +52,81 @@ class SearchNode:
         return self.f_score > other.f_score
 
 
+@dataclass
+class FullHandContext:
+    """Heuristic full-hand context for Module 2 fast search."""
+
+    hand: str
+    position: str
+    stack_sizes: Tuple[int, int]
+    opponent_tendency: str
+    street: str
+    pot_size: float
+    opponent_bet_size: Optional[float]
+    board_features: Dict[str, Any]
+    spr: float
+
+
+def _effective_equity_from_context(
+    hand: str,
+    street: str,
+    board_features: Dict[str, Any],
+) -> float:
+    """
+    Fast equity proxy: preflop table baseline + street/texture adjustments.
+
+    This intentionally remains lightweight and deterministic.
+    """
+    # Local import to avoid unused import cycles.
+    from ev_calculator import get_hand_equity
+
+    eq = get_hand_equity(hand)
+    st = (street or "preflop").strip().lower()
+    if st == "flop":
+        eq += 0.01
+    elif st == "turn":
+        eq += 0.02
+    elif st == "river":
+        eq += 0.03
+
+    if board_features.get("paired", False):
+        eq -= 0.01
+    if board_features.get("flush_draw", False):
+        eq -= 0.015
+    if board_features.get("wet", False):
+        eq -= 0.01
+    if board_features.get("hero_suited", False) and board_features.get("flush_draw", False):
+        eq += 0.02
+    return max(0.05, min(0.95, eq))
+
+
+def build_full_hand_context(
+    *,
+    hand: str,
+    position: str,
+    stack_sizes: Tuple[int, int],
+    opponent_tendency: str,
+    street: str,
+    pot_size: float,
+    opponent_bet_size: Optional[float],
+    board_features: Optional[Dict[str, Any]] = None,
+) -> FullHandContext:
+    """Factory helper to build a validated full-hand context."""
+    your_stack, opp_stack = stack_sizes
+    spr = float(your_stack) / max(pot_size, 0.5)
+    return FullHandContext(
+        hand=hand,
+        position=position,
+        stack_sizes=(int(your_stack), int(opp_stack)),
+        opponent_tendency=opponent_tendency,
+        street=(street or "preflop").strip().lower(),
+        pot_size=float(pot_size),
+        opponent_bet_size=opponent_bet_size,
+        board_features=dict(board_features or {}),
+        spr=spr,
+    )
+
+
 def a_star_search(
     hand: str,
     position: str,
@@ -61,7 +134,11 @@ def a_star_search(
     opponent_tendency: str,
     opponent_bet_size: Optional[float] = None,
     pot_size: float = 1.5,
-    heuristic_type: str = "hand_strength"
+    heuristic_type: str = "hand_strength",
+    street: str = "preflop",
+    board_features: Optional[Dict[str, Any]] = None,
+    spr: Optional[float] = None,
+    equity_override: Optional[float] = None,
 ) -> Dict:
     """
     A* search algorithm to find optimal bet size.
@@ -94,7 +171,12 @@ def a_star_search(
     your_stack, _ = stack_sizes
     
     # Get all possible bet sizes (search space)
-    bet_sizes = get_bet_sizes_for_scenario(your_stack, opponent_bet_size)
+    bet_sizes = get_bet_sizes_for_scenario(
+        your_stack,
+        opponent_bet_size,
+        street=street,
+        pot_size=pot_size,
+    )
     
     if not bet_sizes:
         return {
@@ -139,6 +221,10 @@ def a_star_search(
             opponent_bet_size=opponent_bet_size,
             pot_size=pot_size,
             h_score=h_score,
+            street=street,
+            board_features=board_features,
+            spr=spr,
+            equity_override=equity_override,
         )
         if node is not None:
             heappush(open_set, node)
@@ -187,6 +273,10 @@ def _create_search_node_for_bet_size(
     opponent_bet_size: Optional[float],
     pot_size: float,
     h_score: float,
+    street: str = "preflop",
+    board_features: Optional[Dict[str, Any]] = None,
+    spr: Optional[float] = None,
+    equity_override: Optional[float] = None,
 ) -> Optional[SearchNode]:
     """
     Create a SearchNode for a given bet size, or return None if the bet size
@@ -211,6 +301,10 @@ def _create_search_node_for_bet_size(
             opponent_tendency,
             opponent_bet_size,
             pot_size,
+            street=street,
+            board_features=board_features,
+            spr=spr,
+            equity_override=equity_override,
         )
     else:  # raise or open
         g_score = calculate_ev(
@@ -222,6 +316,10 @@ def _create_search_node_for_bet_size(
             pot_size,
             opponent_bet_size,
             action,
+            street=street,
+            board_features=board_features,
+            spr=spr,
+            equity_override=equity_override,
         )
     
     # f(n) = g(n) + h(n)
@@ -251,7 +349,11 @@ def find_max_ev_bet_size(
     stack_sizes: Tuple[int, int],
     opponent_tendency: str,
     opponent_bet_size: Optional[float] = None,
-    pot_size: float = 1.5
+    pot_size: float = 1.5,
+    street: str = "preflop",
+    board_features: Optional[Dict[str, Any]] = None,
+    spr: Optional[float] = None,
+    equity_override: Optional[float] = None,
 ) -> Dict:
     """
     Find optimal bet size by evaluating all bet sizes directly.
@@ -278,7 +380,12 @@ def find_max_ev_bet_size(
     your_stack, _ = stack_sizes
     
     # Get all possible bet sizes
-    bet_sizes = get_bet_sizes_for_scenario(your_stack, opponent_bet_size)
+    bet_sizes = get_bet_sizes_for_scenario(
+        your_stack,
+        opponent_bet_size,
+        street=street,
+        pot_size=pot_size,
+    )
     
     # Evaluate fold option
     fold_ev = calculate_ev_fold(opponent_bet_size or 0.0, pot_size) if opponent_bet_size else 0.0
@@ -304,12 +411,20 @@ def find_max_ev_bet_size(
         if action == "call":
             ev = calculate_ev_call(
                 hand, position, stack_sizes, opponent_tendency,
-                opponent_bet_size, pot_size
+                opponent_bet_size, pot_size,
+                street=street,
+                board_features=board_features,
+                spr=spr,
+                equity_override=equity_override,
             )
         else:  # raise or open
             ev = calculate_ev(
                 bet_size, hand, position, stack_sizes, opponent_tendency,
-                pot_size, opponent_bet_size, action
+                pot_size, opponent_bet_size, action,
+                street=street,
+                board_features=board_features,
+                spr=spr,
+                equity_override=equity_override,
             )
         
         # Update best if this has higher EV
@@ -338,6 +453,7 @@ def optimal_bet_sizing_search(
     opponent_bet_size: Optional[float] = None,
     pot_size: float = 1.5,
     heuristic_type: str = "hand_strength",
+    full_hand_context: Optional[Dict[str, Any]] = None,
 ) -> Dict:
     """
     Unified entry point: optimal bet size using Module 1 (optional) and A* or brute-force optimization.
@@ -367,6 +483,32 @@ def optimal_bet_sizing_search(
     """
     your_stack, _ = stack_sizes
     m1_result: Dict = {}
+    street = "preflop"
+    board_features: Dict[str, Any] = {}
+    spr: Optional[float] = None
+    equity_override: Optional[float] = None
+
+    if full_hand_context is not None:
+        ctx = build_full_hand_context(
+            hand=full_hand_context.get("hand", hand),
+            position=full_hand_context.get("position", position),
+            stack_sizes=tuple(full_hand_context.get("stack_sizes", stack_sizes)),
+            opponent_tendency=full_hand_context.get("opponent_tendency", opponent_tendency),
+            street=full_hand_context.get("street", "preflop"),
+            pot_size=float(full_hand_context.get("pot_size", pot_size)),
+            opponent_bet_size=full_hand_context.get("opponent_bet_size", opponent_bet_size),
+            board_features=full_hand_context.get("board_features", {}),
+        )
+        hand = ctx.hand
+        position = ctx.position
+        stack_sizes = ctx.stack_sizes
+        opponent_tendency = ctx.opponent_tendency
+        street = ctx.street
+        pot_size = ctx.pot_size
+        opponent_bet_size = ctx.opponent_bet_size
+        board_features = ctx.board_features
+        spr = ctx.spr
+        equity_override = _effective_equity_from_context(hand, street, board_features)
 
     # Use passed-in Module 1 result (knowledge base / playability from Module 1) if provided
     if module1_result is not None:
@@ -402,6 +544,10 @@ def optimal_bet_sizing_search(
             hand, position, stack_sizes, opponent_tendency,
             opponent_bet_size=opponent_bet_size,
             pot_size=pot_size,
+            street=street,
+            board_features=board_features,
+            spr=spr,
+            equity_override=equity_override,
         )
     else:
         raw = a_star_search(
@@ -409,6 +555,10 @@ def optimal_bet_sizing_search(
             opponent_bet_size=opponent_bet_size,
             pot_size=pot_size,
             heuristic_type=heuristic_type,
+            street=street,
+            board_features=board_features,
+            spr=spr,
+            equity_override=equity_override,
         )
 
     action = raw["action"]
@@ -431,4 +581,5 @@ def optimal_bet_sizing_search(
         "reason": reason,
         "search_algorithm": method,
         "module1_result": m1_result,
+        "street": street,
     }

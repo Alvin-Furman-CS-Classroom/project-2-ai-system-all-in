@@ -29,6 +29,20 @@ This module uses **Monte Carlo simulation only** to compute optimal opening acti
 - `bet_sizing_optimizer.py` – Find optimal opening actions by evaluating candidates via Monte Carlo (no Module 2 input).
 - `demo_module3.py` – Demo script.
 
+## Full Web App Integration
+
+Module 3 is available in the full-hand web app via bot id `m3`.
+
+- Routing: `full_game_engine/bot_agents.py`
+- Action adapter: `full_game_engine/mc_bot.py`
+- UI selector: `full_game_web_app/templates/index.html`
+
+### Behavior note (all streets)
+
+`m3` uses the current Monte Carlo adapter on preflop and postflop decisions.
+Postflop decisions are approximation-based through the same action-to-simulation mapping,
+so they are intended for practical gameplay integration rather than exact game-tree solving.
+
 ## Running the demo
 
 From project root:

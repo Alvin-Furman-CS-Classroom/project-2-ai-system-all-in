@@ -3,7 +3,7 @@ Bet size discretization for poker bet sizing search.
 Defines the set of bet sizes to consider in the search space.
 """
 
-from typing import List, Optional, Tuple
+from typing import List, Optional
 
 
 # Standard bet size increments (multiples of big blind)
@@ -14,6 +14,16 @@ MIN_BET_SIZE = 2.0
 
 # Maximum reasonable bet size before going all-in (can be adjusted)
 MAX_STANDARD_BET_SIZE = 10.0
+
+
+STREET_BET_CANDIDATES = {
+    # Preflop uses BB-multiple style sizes.
+    "preflop": [2.0, 2.5, 3.0, 3.5, 4.0, 5.0, 6.0, 8.0, 10.0],
+    # Postflop uses common pot fractions.
+    "flop": [0.33, 0.50, 0.75, 1.00, 1.50],
+    "turn": [0.33, 0.50, 0.75, 1.00, 1.50],
+    "river": [0.50, 0.75, 1.00, 1.50, 2.00],
+}
 
 
 def get_bet_sizes(
@@ -92,7 +102,9 @@ def get_standard_bet_sizes(stack_size: int) -> List[float]:
 def get_bet_sizes_for_scenario(
     stack_size: int,
     opponent_bet_size: Optional[float] = None,
-    use_standard: bool = True
+    use_standard: bool = True,
+    street: str = "preflop",
+    pot_size: float = 1.5,
 ) -> List[float]:
     """
     Get bet sizes for a specific scenario (opening or facing bet).
@@ -105,21 +117,35 @@ def get_bet_sizes_for_scenario(
     Returns:
         List of bet sizes to consider.
     """
-    if use_standard:
-        if opponent_bet_size is None:
-            # Opening: use standard bet sizes
-            return get_standard_bet_sizes(stack_size)
-        else:
-            # Facing bet: include call + standard raise sizes
-            bet_sizes = [opponent_bet_size]  # Call option
-            standard = get_standard_bet_sizes(stack_size)
-            # Add raises that are > opponent's bet
-            for bs in standard:
+    st = street.strip().lower()
+    if st not in STREET_BET_CANDIDATES:
+        st = "preflop"
+
+    if st == "preflop":
+        if use_standard:
+            if opponent_bet_size is None:
+                return get_standard_bet_sizes(stack_size)
+            bet_sizes = [opponent_bet_size]
+            for bs in get_standard_bet_sizes(stack_size):
                 if bs > opponent_bet_size:
                     bet_sizes.append(bs)
             return sorted(list(set(bet_sizes)))
-    else:
         return get_bet_sizes(stack_size, opponent_bet_size)
+
+    # Postflop: candidates are built from pot fractions (in BB units).
+    fractions = STREET_BET_CANDIDATES[st]
+    base = max(pot_size + (opponent_bet_size or 0.0), 0.5)
+    candidates: List[float] = []
+    if opponent_bet_size is not None:
+        candidates.append(float(opponent_bet_size))  # call option
+    for frac in fractions:
+        size = round(max(0.5, frac * base), 2)
+        if size <= stack_size:
+            if opponent_bet_size is None or size > opponent_bet_size:
+                candidates.append(size)
+    if stack_size > 0:
+        candidates.append(float(stack_size))
+    return sorted(list(set(candidates)))
 
 
 def normalize_bet_size(bet_size: float, stack_size: int) -> float:

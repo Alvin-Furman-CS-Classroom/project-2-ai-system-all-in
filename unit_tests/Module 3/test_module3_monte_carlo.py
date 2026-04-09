@@ -8,13 +8,19 @@ These tests are intentionally lightweight and focus on:
 
 import unittest
 import sys
+import random
 from pathlib import Path
 
-# Add Module 3 directory to path
-sys.path.insert(0, str(Path(__file__).parent.parent.parent / "Module 3"))
+# Project root (for full_game_engine) and Module 3
+_ROOT = Path(__file__).resolve().parent.parent.parent
+sys.path.insert(0, str(_ROOT))
+sys.path.insert(0, str(_ROOT / "Module 3"))
+
+from full_game_engine.cards import Card
 
 from monte_carlo_simulator import (  # type: ignore
     _get_adjusted_opponent_probs,
+    monte_carlo_equity_vs_conditioned_range,
     run_simulation,
     run_simulation_for_strategy,
 )
@@ -86,6 +92,78 @@ class TestRunSimulation(unittest.TestCase):
             seed=42,
         )
         self.assertAlmostEqual(result["value_estimate"], 0.0, places=6)
+
+    def test_run_simulation_postflop_board_affects_value(self):
+        """With hero hole + board, EV uses board-aware equity (not preflop table only)."""
+        hole = (Card.from_str("7d"), Card.from_str("2c"))
+        wet = [Card.from_str("9h"), Card.from_str("Th"), Card.from_str("Jh")]
+        dry = [Card.from_str("2s"), Card.from_str("3d"), Card.from_str("8c")]
+        base = dict(
+            hand="72o",
+            action="open",
+            bet_size=2.0,
+            position="Button",
+            stack_sizes=(50, 50),
+            opponent_tendency="Unknown",
+            num_trials=400,
+            pot_size=4.0,
+            seed=99,
+        )
+        r_wet = run_simulation(**base, hero_hole=hole, board=wet)
+        r_dry = run_simulation(**base, hero_hole=hole, board=dry)
+        self.assertGreater(
+            abs(r_wet["value_estimate"] - r_dry["value_estimate"]),
+            1e-6,
+            "board-aware equity should change EV vs different board textures",
+        )
+
+    def test_conditioned_raise_range_stronger_than_call(self):
+        """Raise continuing range should leave weak heroes worse off than call range."""
+        hole = (Card.from_str("7d"), Card.from_str("2c"))
+        board = [Card.from_str("Ah"), Card.from_str("Kh"), Card.from_str("Qh")]
+        eq_call = monte_carlo_equity_vs_conditioned_range(
+            hole,
+            board,
+            "call",
+            "Unknown",
+            3.0,
+            random.Random(7),
+            num_samples=600,
+        )
+        eq_raise = monte_carlo_equity_vs_conditioned_range(
+            hole,
+            board,
+            "raise",
+            "Unknown",
+            3.0,
+            random.Random(7),
+            num_samples=600,
+        )
+        self.assertLess(eq_raise, eq_call)
+
+    def test_conditioned_equity_reproducible_with_seed(self):
+        """Same seed and sample count yields identical conditioned equity."""
+        hole = (Card.from_str("Td"), Card.from_str("9d"))
+        board = [Card.from_str("Jc"), Card.from_str("8h"), Card.from_str("2s")]
+        a = monte_carlo_equity_vs_conditioned_range(
+            hole,
+            board,
+            "call",
+            "Tight",
+            2.5,
+            random.Random(404),
+            num_samples=250,
+        )
+        b = monte_carlo_equity_vs_conditioned_range(
+            hole,
+            board,
+            "call",
+            "Tight",
+            2.5,
+            random.Random(404),
+            num_samples=250,
+        )
+        self.assertEqual(a, b)
 
 
 class TestStrategySimulation(unittest.TestCase):

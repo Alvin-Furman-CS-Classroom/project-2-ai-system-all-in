@@ -1,8 +1,9 @@
 """
 Flask web UI (full game): human (seat 0) vs bot (seat 1), full-hand Hold'em.
 
-Opponent is chosen per session: **Module 5 RL** (``rl``) or **Module 4 LLM**
-(``m4``, Ollama-backed; falls back to random legal on error).
+Opponent is chosen per session: **Module 5 RL** (``rl_optimal``/``rl_coverage``),
+**Module 2 fast search** (``m2``), **Module 3 Monte Carlo** (``m3``), or
+**Module 4 LLM** (``m4``, Ollama-backed; falls back to random legal on error).
 
 Human actions return immediately. The bot moves only when the client POSTs
 `/api/advance_bot` (after a client-side "thinking" delay).
@@ -211,7 +212,7 @@ def api_reset_game():
 
 @app.route("/api/set_agent", methods=["POST"])
 def api_set_agent():
-    """Set opponent agent for this session: rl_optimal | rl_coverage | m4."""
+    """Set opponent agent for this session: rl_optimal | rl_coverage | m2 | m3 | m4."""
     sid = _ensure_session()
     body = request.get_json(silent=True) or {}
     raw = body.get("agent", DEFAULT_BOT_AGENT)

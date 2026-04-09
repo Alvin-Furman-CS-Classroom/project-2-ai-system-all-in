@@ -1,7 +1,5 @@
 """
-Bot policy for full_game_engine: Module 5 RL and/or Module 4 LLM (index pick).
-
-Session agent id: ``rl`` (tabular Q policy) or ``m4`` (Ollama-backed legal index).
+Bot policy for full_game_engine: Module 5 RL, Module 2 search, and Module 4 LLM.
 """
 
 from __future__ import annotations
@@ -13,7 +11,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
 from full_game_engine.hu_hand import HandState, legal_actions, random_legal_action
-from full_game_engine.mc_bot import hole_cards_to_mc_hand
+from full_game_engine.mc_bot import hole_cards_to_mc_hand, mc_or_random_action
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -25,7 +23,15 @@ from action_mapping import legal_buckets, map_bucket_to_action  # type: ignore  
 from rl_agent import RLPokerAgent  # type: ignore  # noqa: E402
 from state_encoder import encode_from_hand_state  # type: ignore  # noqa: E402
 
-_BOT_AGENTS = frozenset({"rl", "rl_optimal", "rl_coverage", "m4"})
+_M2_DIR = ROOT / "Module 2"
+if str(_M2_DIR) not in sys.path:
+    sys.path.insert(0, str(_M2_DIR))
+try:
+    from bet_sizing_search import optimal_bet_sizing_search  # type: ignore  # noqa: E402
+except ImportError:  # pragma: no cover
+    optimal_bet_sizing_search = None  # type: ignore
+
+_BOT_AGENTS = frozenset({"rl", "rl_optimal", "rl_coverage", "m2", "m3", "m4"})
 DEFAULT_BOT_AGENT = "rl_optimal"
 
 _RL_AGENTS: Dict[str, Optional[RLPokerAgent]] = {}
@@ -37,6 +43,118 @@ def normalize_agent(name: Optional[str]) -> str:
     if a == "rl":
         return "rl_optimal"
     return a if a in _BOT_AGENTS else DEFAULT_BOT_AGENT
+
+
+def _position_label(state: HandState, seat: int) -> str:
+    return "Button" if state.button == seat else "Big Blind"
+
+
+def _board_features(state: HandState, seat: int) -> Dict[str, Any]:
+    board = tuple(state.board)
+    suits = [c.suit for c in board]
+    ranks = [c.rank for c in board]
+    suit_counts: Dict[Any, int] = {}
+    for s in suits:
+        suit_counts[s] = suit_counts.get(s, 0) + 1
+    rank_counts: Dict[Any, int] = {}
+    for r in ranks:
+        rank_counts[r] = rank_counts.get(r, 0) + 1
+
+    c0, c1 = state.hole_cards[seat]
+    hero_suited = c0.suit == c1.suit
+    flush_draw = max(suit_counts.values(), default=0) >= 3
+    wet = flush_draw or (len(ranks) >= 3 and (max(ranks) - min(ranks) <= 5))
+    return {
+        "board_len": len(board),
+        "paired": any(v >= 2 for v in rank_counts.values()),
+        "flush_draw": flush_draw,
+        "wet": wet,
+        "hero_suited": hero_suited,
+    }
+
+
+def _closest_raise_action(state: HandState, target_total_bb: float) -> Optional[Dict[str, Any]]:
+    acts = [a for a in legal_actions(state) if a.get("kind") == "raise_to"]
+    if not acts:
+        return None
+    bb = float(state.bb_chips)
+    target_total = int(round(target_total_bb * bb))
+    best = min(acts, key=lambda a: abs(int(a["total"]) - target_total))
+    return dict(best)
+
+
+def _m2_action(state: HandState, rng: random.Random) -> Dict[str, Any]:
+    """Module 2 fast heuristic full-hand adapter."""
+    if optimal_bet_sizing_search is None:
+        return random_legal_action(state, rng)
+    acts = legal_actions(state)
+    if not acts:
+        raise ValueError("No legal actions")
+    seat = state.actor
+    c0, c1 = state.hole_cards[seat]
+    hand = hole_cards_to_mc_hand(c0, c1)
+    bb = float(state.bb_chips)
+    context = {
+        "hand": hand,
+        "position": _position_label(state, seat),
+        "stack_sizes": (
+            int(round(state.stacks[seat] / bb)),
+            int(round(state.stacks[1 - seat] / bb)),
+        ),
+        "opponent_tendency": "Unknown",
+        "street": state.street,
+        "pot_size": max(state.pot / bb, 0.5),
+        "opponent_bet_size": (state.to_call(seat) / bb) if state.to_call(seat) > 0 else None,
+        "board_features": _board_features(state, seat),
+    }
+    try:
+        rec = optimal_bet_sizing_search(
+            hand=hand,
+            position=context["position"],
+            stack_sizes=context["stack_sizes"],
+            opponent_tendency="Unknown",
+            search_algorithm="a_star",
+            use_module1=False,
+            opponent_bet_size=context["opponent_bet_size"],
+            pot_size=context["pot_size"],
+            full_hand_context=context,
+        )
+    except Exception:
+        return random_legal_action(state, rng)
+
+    action = str(rec.get("action", "fold"))
+    if action == "fold":
+        for a in acts:
+            if a.get("kind") == "fold":
+                return dict(a)
+        for a in acts:
+            if a.get("kind") == "check":
+                return dict(a)
+        return dict(acts[0])
+    if action == "call":
+        for a in acts:
+            if a.get("kind") == "call":
+                return dict(a)
+        for a in acts:
+            if a.get("kind") == "check":
+                return dict(a)
+        return dict(acts[0])
+    # open/raise -> closest legal raise total.
+    raise_act = _closest_raise_action(state, float(rec.get("bet_size", 0.0)))
+    if raise_act is not None:
+        return raise_act
+    for a in acts:
+        if a.get("kind") == "call":
+            return dict(a)
+    for a in acts:
+        if a.get("kind") == "check":
+            return dict(a)
+    return dict(acts[0])
+
+
+def _m3_action(state: HandState, rng: random.Random) -> Dict[str, Any]:
+    """Module 3 Monte Carlo adapter (all-streets approximation)."""
+    return mc_or_random_action(state, rng, use_mc=True)
 
 
 def _resolve_rl_checkpoint(agent_key: str) -> Path:
@@ -146,7 +264,7 @@ def _m4_action(
 def pick_bot_action(
     agent: Optional[str], state: HandState, rng: random.Random
 ) -> Tuple[Dict[str, Any], Optional[Dict[str, Any]]]:
-    """Dispatch to RL (``rl``/``rl_optimal``/``rl_coverage``) or Module 4 LLM (``m4``).
+    """Dispatch to RL, Module 2 search, Module 3 MC, or Module 4 LLM.
 
     Returns ``(engine_action, decision_meta)``. ``decision_meta`` is set only for ``m4``.
     """
@@ -154,6 +272,10 @@ def pick_bot_action(
     try:
         if a == "m4":
             return _m4_action(state, rng)
+        if a == "m3":
+            return _m3_action(state, rng), None
+        if a == "m2":
+            return _m2_action(state, rng), None
         return _rl_action(state, rng, a), None
     except Exception:
         return random_legal_action(state, rng), None

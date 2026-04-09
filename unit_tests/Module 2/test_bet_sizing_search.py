@@ -30,6 +30,7 @@ from bet_sizing_search import a_star_search
 from bet_size_discretization import (
     MIN_BET_SIZE,
     MAX_STANDARD_BET_SIZE,
+    get_bet_sizes_for_scenario,
 )
 
 
@@ -190,6 +191,31 @@ class TestAStarSearch(unittest.TestCase):
         self.assertIn("bet_size", result)
         self.assertIn(result["action"], ["fold", "call", "raise"])
 
+    def test_full_hand_context_smoke(self):
+        """Full-hand context should return a valid search result."""
+        from bet_sizing_search import optimal_bet_sizing_search
+
+        result = optimal_bet_sizing_search(
+            hand="AKs",
+            position="Button",
+            stack_sizes=(60, 60),
+            opponent_tendency="Unknown",
+            use_module1=False,
+            full_hand_context={
+                "hand": "AKs",
+                "position": "Button",
+                "stack_sizes": (60, 60),
+                "opponent_tendency": "Unknown",
+                "street": "flop",
+                "pot_size": 8.0,
+                "opponent_bet_size": 2.5,
+                "board_features": {"paired": False, "flush_draw": True, "wet": True},
+            },
+        )
+        self.assertIn(result["action"], ["fold", "call", "raise", "open"])
+        self.assertIn("expected_value", result)
+        self.assertEqual(result.get("street"), "flop")
+
 
 class TestSearchConsistency(unittest.TestCase):
     """Cross-check A* search against brute-force optimization."""
@@ -283,6 +309,17 @@ class TestEdgeCases(unittest.TestCase):
         self.assertIsInstance(ev_30, float)
         self.assertIsInstance(ev_40, float)
         self.assertIsInstance(ev_50, float)
+
+    def test_postflop_bet_size_candidates(self):
+        """Postflop discretization should include call and pot-fraction raises."""
+        sizes = get_bet_sizes_for_scenario(
+            stack_size=50,
+            opponent_bet_size=2.0,
+            street="flop",
+            pot_size=8.0,
+        )
+        self.assertTrue(2.0 in sizes)  # call
+        self.assertTrue(any(s > 2.0 for s in sizes))  # raises
 
 
 if __name__ == '__main__':

@@ -69,6 +69,8 @@ def _estimate_action_ev(
     stacks_bb = _stacks_bb_bot_view(state, bot_seat)
     pos = _position_label(state, bot_seat)
     pot_bb = max(state.pot / bb, 0.5)
+    c0, c1 = state.hole_cards[bot_seat]
+    board_list = list(state.board)
 
     kind = action["kind"]
     if kind == "fold":
@@ -86,6 +88,8 @@ def _estimate_action_ev(
             num_trials=num_trials,
             pot_size=pot_bb,
             seed=seed,
+            hero_hole=(c0, c1),
+            board=board_list,
         )
         return float(res["value_estimate"])
 
@@ -102,6 +106,8 @@ def _estimate_action_ev(
             num_trials=num_trials,
             pot_size=pot_bb,
             seed=seed,
+            hero_hole=(c0, c1),
+            board=board_list,
         )
         return float(res["value_estimate"])
 
@@ -118,6 +124,8 @@ def _estimate_action_ev(
             num_trials=num_trials,
             pot_size=pot_bb,
             seed=seed,
+            hero_hole=(c0, c1),
+            board=board_list,
         )
         return float(res["value_estimate"])
 

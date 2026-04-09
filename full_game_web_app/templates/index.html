@@ -19,6 +19,8 @@
         <select id="agent-select" aria-label="Choose bot opponent">
           <option value="rl_optimal" selected>Agent 4 (RL - optimal)</option>
           <option value="rl_coverage">Agent 4 (RL - coverage)</option>
+          <option value="m2">Agent 1/2 (Search heuristic)</option>
+          <option value="m3">Agent 2/3 (Monte Carlo)</option>
           <option value="m4">Agent 3 (LLM - Ollama)</option>
         </select>
       </div>
@@ -123,7 +125,7 @@
     const restartGameBtn = document.getElementById("restart-game");
     const agentSelect = document.getElementById("agent-select");
     const BETTING_PHASES = new Set(["preflop", "flop", "turn", "river"]);
-    const BOT_AGENT_IDS = ["rl", "m4"];
+    const BOT_AGENT_IDS = ["rl_optimal", "rl_coverage", "m2", "m3", "m4"];
 
     function syncAgentSelect(botAgent) {
       if (!agentSelect || !botAgent) return;
