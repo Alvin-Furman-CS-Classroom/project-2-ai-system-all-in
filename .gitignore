@@ -15,3 +15,4 @@ build/
 *.log
 .idea/
 .vscode/
+Module 5/checkpoints/*_missing_*.pkl

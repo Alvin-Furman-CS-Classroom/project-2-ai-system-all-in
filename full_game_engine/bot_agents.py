@@ -25,32 +25,67 @@ from action_mapping import legal_buckets, map_bucket_to_action  # type: ignore  
 from rl_agent import RLPokerAgent  # type: ignore  # noqa: E402
 from state_encoder import encode_from_hand_state  # type: ignore  # noqa: E402
 
-_BOT_AGENTS = frozenset({"rl", "m4"})
-DEFAULT_BOT_AGENT = "rl"
+_BOT_AGENTS = frozenset({"rl", "rl_optimal", "rl_coverage", "m4"})
+DEFAULT_BOT_AGENT = "rl_optimal"
 
-_RL_AGENT: Optional[RLPokerAgent] = None
+_RL_AGENTS: Dict[str, Optional[RLPokerAgent]] = {}
 _M4_DIR = ROOT / "Module 4"
 
 
 def normalize_agent(name: Optional[str]) -> str:
     a = (name or DEFAULT_BOT_AGENT).strip().lower()
+    if a == "rl":
+        return "rl_optimal"
     return a if a in _BOT_AGENTS else DEFAULT_BOT_AGENT
 
 
-def _load_rl_agent() -> Optional[RLPokerAgent]:
-    """Load RL policy (epsilon=0). Override with RL_POLICY_PATH env var."""
-    global _RL_AGENT
-    if _RL_AGENT is not None:
-        return _RL_AGENT
-    ckpt = Path(os.environ.get("RL_POLICY_PATH", str(M5 / "checkpoints" / "fine_1b_2phase.pkl")))
+def _resolve_rl_checkpoint(agent_key: str) -> Path:
+    """
+    Resolve checkpoint path for RL variants.
+
+    Env overrides:
+      - RL_POLICY_PATH: applies to alias ``rl`` only.
+      - RL_OPTIMAL_POLICY_PATH: path for ``rl_optimal``.
+      - RL_COVERAGE_POLICY_PATH: path for ``rl_coverage``.
+    """
+    checkpoints = M5 / "checkpoints"
+    if agent_key == "rl_coverage":
+        return Path(
+            os.environ.get(
+                "RL_COVERAGE_POLICY_PATH",
+                str(checkpoints / "coverage.pkl"),
+            )
+        )
+    if agent_key == "rl_optimal":
+        return Path(
+            os.environ.get(
+                "RL_OPTIMAL_POLICY_PATH",
+                str(checkpoints / "optimal.pkl"),
+            )
+        )
+    return Path(
+        os.environ.get(
+            "RL_POLICY_PATH",
+            str(checkpoints / "optimal.pkl"),
+        )
+    )
+
+
+def _load_rl_agent(agent_key: str) -> Optional[RLPokerAgent]:
+    """Load and cache RL policy by agent id (epsilon=0)."""
+    if agent_key in _RL_AGENTS:
+        return _RL_AGENTS[agent_key]
+    ckpt = _resolve_rl_checkpoint(agent_key)
     if not ckpt.exists():
+        _RL_AGENTS[agent_key] = None
         return None
     try:
         agent = RLPokerAgent.load(ckpt)
     except Exception:
+        _RL_AGENTS[agent_key] = None
         return None
     agent.epsilon = 0.0
-    _RL_AGENT = agent
+    _RL_AGENTS[agent_key] = agent
     return agent
 
 
@@ -68,9 +103,9 @@ def _load_module4_choose_with_meta():
         return None
 
 
-def _rl_action(state: HandState, rng: random.Random) -> Dict[str, Any]:
+def _rl_action(state: HandState, rng: random.Random, agent_key: str) -> Dict[str, Any]:
     """Map RL bucket choice to a legal engine action; fall back to random on errors."""
-    agent = _load_rl_agent()
+    agent = _load_rl_agent(agent_key)
     if agent is None:
         return random_legal_action(state, rng)
     if not legal_actions(state):
@@ -111,7 +146,7 @@ def _m4_action(
 def pick_bot_action(
     agent: Optional[str], state: HandState, rng: random.Random
 ) -> Tuple[Dict[str, Any], Optional[Dict[str, Any]]]:
-    """Dispatch to RL (``rl``) or Module 4 LLM (``m4``).
+    """Dispatch to RL (``rl``/``rl_optimal``/``rl_coverage``) or Module 4 LLM (``m4``).
 
     Returns ``(engine_action, decision_meta)``. ``decision_meta`` is set only for ``m4``.
     """
@@ -119,6 +154,6 @@ def pick_bot_action(
     try:
         if a == "m4":
             return _m4_action(state, rng)
-        return _rl_action(state, rng), None
+        return _rl_action(state, rng, a), None
     except Exception:
         return random_legal_action(state, rng), None

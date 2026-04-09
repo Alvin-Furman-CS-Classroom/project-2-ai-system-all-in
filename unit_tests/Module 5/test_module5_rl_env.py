@@ -67,6 +67,23 @@ class TestLegalBuckets(unittest.TestCase):
         self.assertTrue(len(lb) <= len(DISCRETE_BUCKETS))
 
 
+class TestShortAllInCallMapping(unittest.TestCase):
+    def test_check_call_maps_to_short_all_in_call(self):
+        rng = random.Random(9)
+        h = new_hand([120, 300], rng=rng, button=0, sb_chips=10, bb_chips=20)
+        apply_action(h, {"kind": "call"})
+        apply_action(h, {"kind": "raise_to", "total": 200})
+
+        acts = legal_actions(h)
+        call_actions = [a for a in acts if a["kind"] == "call"]
+        self.assertEqual(len(call_actions), 1)
+        self.assertLess(call_actions[0]["amount"], h.to_call(h.actor))
+
+        mapped = map_bucket_to_action(h, "check_call")
+        self.assertEqual(mapped["kind"], "call")
+        self.assertEqual(mapped.get("amount"), call_actions[0]["amount"])
+
+
 class TestSaveLoad(unittest.TestCase):
     def test_save_load_roundtrip(self):
         a = RLPokerAgent(actions=list(DISCRETE_BUCKETS), epsilon=0.05)

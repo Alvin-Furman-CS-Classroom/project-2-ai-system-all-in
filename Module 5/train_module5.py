@@ -12,8 +12,10 @@ Example:
 from __future__ import annotations
 
 import argparse
+import datetime as dt
 import random
 import signal
+import subprocess
 import sys
 from pathlib import Path
 
@@ -26,6 +28,57 @@ for _p in (_ROOT, _M5):
 from action_mapping import DISCRETE_BUCKETS
 from rl_agent import RLPokerAgent
 from trainer import evaluate_bb_per_hand, train_self_play
+
+
+def _git_commit_short() -> str:
+    try:
+        out = subprocess.check_output(
+            ["git", "rev-parse", "--short", "HEAD"],
+            cwd=str(_ROOT),
+            text=True,
+        )
+        return out.strip()
+    except Exception:
+        return "unknown"
+
+
+def _build_training_meta(
+    args: argparse.Namespace,
+    *,
+    episodes_completed: int,
+    final_button: int,
+    randomize_stacks: bool,
+    random_legal_opponent_prob: float,
+) -> dict:
+    return {
+        "episodes_completed": int(episodes_completed),
+        "final_button": int(final_button) & 1,
+        "training_script": str(Path(__file__).name),
+        "saved_at_utc": dt.datetime.now(dt.timezone.utc).isoformat(),
+        "git_commit": _git_commit_short(),
+        "training_config": {
+            "episodes_requested_this_invocation": int(args.episodes),
+            "save_every": int(args.save_every),
+            "resume": bool(args.resume),
+            "seed": args.seed,
+            "alpha": float(args.alpha),
+            "gamma": float(args.gamma),
+            "epsilon_schedule": int(args.epsilon_schedule),
+            "epsilon_start": float(args.epsilon_start),
+            "epsilon_end": float(args.epsilon_end),
+            "epsilon_decay_fraction": float(args.epsilon_decay_fraction),
+            "bb_chips": int(args.bb_chips),
+            "sb_chips": int(args.sb_chips),
+            "randomize_stacks": bool(randomize_stacks),
+            "starting_bb_each": int(args.starting_bb_each),
+            "combined_bb_total": int(args.combined_bb_total),
+            "min_stack_bb": int(args.min_stack_bb),
+            "stack_sampling_mode": str(args.stack_sampling_mode),
+            "stack_sampling_extreme_prob": float(args.stack_sampling_extreme_prob),
+            "count_bonus_c": float(args.count_bonus_c),
+            "random_legal_opponent_prob": float(random_legal_opponent_prob),
+        },
+    }
 
 
 def _parse_args() -> argparse.Namespace:
@@ -147,6 +200,8 @@ def main() -> None:
     episode_index_start = episodes_completed
     remaining = max(0, args.episodes)
     save_every = max(0, args.save_every)
+    randomize = not args.no_random_stacks
+    rlo = max(0.0, min(1.0, args.random_legal_opponent_prob))
 
     live_progress: dict[str, int] = {
         "episodes_done": episodes_completed,
@@ -157,10 +212,13 @@ def main() -> None:
         nonlocal episodes_completed, button
         agent.save(
             checkpoint,
-            extra={
-                "episodes_completed": episodes_completed,
-                "final_button": int(button) & 1,
-            },
+            extra=_build_training_meta(
+                args,
+                episodes_completed=episodes_completed,
+                final_button=button,
+                randomize_stacks=randomize,
+                random_legal_opponent_prob=rlo,
+            ),
         )
         print(f"Saved {checkpoint} ({reason}, episodes_completed={episodes_completed}).")
 
@@ -168,10 +226,13 @@ def main() -> None:
         print("\nInterrupt — saving checkpoint...", file=sys.stderr)
         agent.save(
             checkpoint,
-            extra={
-                "episodes_completed": int(live_progress["episodes_done"]),
-                "final_button": int(live_progress["button"]) & 1,
-            },
+            extra=_build_training_meta(
+                args,
+                episodes_completed=int(live_progress["episodes_done"]),
+                final_button=int(live_progress["button"]) & 1,
+                randomize_stacks=randomize,
+                random_legal_opponent_prob=rlo,
+            ),
         )
         print(
             f"Saved {checkpoint} (interrupt, episodes_completed={live_progress['episodes_done']}).",
@@ -181,13 +242,11 @@ def main() -> None:
 
     signal.signal(signal.SIGINT, on_sigint)
 
-    randomize = not args.no_random_stacks
     stack_desc = (
         f"random split of {args.combined_bb_total} BB total"
         if randomize
         else f"equal {args.starting_bb_each} BB each"
     )
-    rlo = max(0.0, min(1.0, args.random_legal_opponent_prob))
     print(
         f"Training {remaining} episodes (epsilon_schedule={args.epsilon_schedule}, "
         f"episode_index_start={episode_index_start}, stacks={stack_desc}, "

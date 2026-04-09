@@ -211,7 +211,7 @@ def api_reset_game():
 
 @app.route("/api/set_agent", methods=["POST"])
 def api_set_agent():
-    """Set opponent agent for this session: rl | m4."""
+    """Set opponent agent for this session: rl_optimal | rl_coverage | m4."""
     sid = _ensure_session()
     body = request.get_json(silent=True) or {}
     raw = body.get("agent", DEFAULT_BOT_AGENT)

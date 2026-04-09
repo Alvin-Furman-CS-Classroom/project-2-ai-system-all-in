@@ -96,6 +96,8 @@ For **symmetric** self-play with alternating buttons, **`mean_seat_diff`** shoul
 | `trainer.py` | `train_self_play`, `evaluate_bb_per_hand`, `train_from_transitions` |
 | `demo_module5.py` | Example train + greedy eval |
 | `train_module5.py` | CLI: long runs, `--save-every`, `--resume`, checkpoint path |
+| `train_policy_long_coverage.py` | 100M-style coverage-tilted training recipe |
+| `benchmark_policies.py` | Repeatable pairwise checkpoint tournament |
 
 ## Long training (`train_module5.py`)
 
@@ -110,6 +112,7 @@ python3 "Module 5/train_module5.py" --episodes 2000 --resume --checkpoint "Modul
 - **`--stack-sampling-mode`** (`uniform` | `extreme_mix`) and **`--stack-sampling-extreme-prob`:** random combined-stack distribution when random stacks are on.
 - **`--count-bonus-c`:** count-based exploration bonus on greedy scores (`0` disables).
 - **`--checkpoint`:** path to the policy pickle.
+- **Reproducibility metadata (saved in checkpoint):** script name, UTC timestamp, git commit, and full CLI training config are persisted in `_training_extra`.
 
 **Starting stacks (default):** each hand samples a **random split** of **`--combined-bb-total`** (default **200 BB**) between the two players, with at least **`--min-stack-bb`** (default **5 BB**) each so both can post blinds. Total chips are always `combined_bb_total × bb_chips`. Use **`--no-random-stacks`** for the old behavior (equal **`--starting-bb-each`** per player).
 
@@ -148,11 +151,56 @@ agent.epsilon = 0.0  # greedy at play time
 
 Save with `agent.save(Path("path/to/policy.pkl"))`. The file is **pickle** (tuple state keys); only load files you trust.
 
+### Reproducibility metadata in checkpoints
+
+Every checkpoint written by `train_module5.py` and `train_policy_long_coverage.py` stores:
+
+- `episodes_completed`, `final_button`
+- `training_script`
+- `saved_at_utc`
+- `git_commit`
+- `training_config` (CLI hyperparameters and sampling settings)
+
+Inspect quickly:
+
+```python
+from rl_agent import RLPokerAgent
+agent = RLPokerAgent.load("Module 5/checkpoints/optimal.pkl")
+print(agent._training_extra)
+```
+
 ## Running the demo
 
 ```bash
 python3 "Module 5/demo_module5.py"
 ```
+
+## Benchmarking policies (pairwise)
+
+Run a repeatable tournament across two or more checkpoints:
+
+```bash
+python3 "Module 5/benchmark_policies.py" \
+  --policies "Module 5/checkpoints/optimal.pkl" "Module 5/checkpoints/coverage.pkl" \
+  --hands 10000 \
+  --seed 1337
+```
+
+Output includes winner by BB/hand differential and hand-win counts per pair.
+
+## Full web app policy selection
+
+In `full_game_web_app`, Module 5 exposes two RL bot ids:
+
+- `rl_optimal` → default `Module 5/checkpoints/optimal.pkl`
+- `rl_coverage` → default `Module 5/checkpoints/coverage.pkl`
+
+Environment variable overrides:
+
+- `RL_OPTIMAL_POLICY_PATH`
+- `RL_COVERAGE_POLICY_PATH`
+
+`rl` remains a backward-compatible alias of `rl_optimal`.
 
 ## Tests
 
