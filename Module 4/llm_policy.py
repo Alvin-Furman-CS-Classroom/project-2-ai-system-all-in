@@ -163,7 +163,8 @@ def _call_ollama(user_text: str, timeout_s: Optional[float] = None) -> Dict[str,
     strict_prompt = (
         user_text
         + "\n\nIMPORTANT (required): include BOTH option_index and reason. "
-        + "Make reason informative with useful poker detail."
+        + "Make reason detailed. Start with hero hand, pot size, and opponent action context; "
+        + "then discuss hand strength/draws/board texture before the final action choice."
     )
     payload = {
         "model": OLLAMA_MODEL,
