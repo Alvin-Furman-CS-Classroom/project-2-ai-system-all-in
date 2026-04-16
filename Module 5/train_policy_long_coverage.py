@@ -26,11 +26,9 @@ import sys
 import time
 from pathlib import Path
 
-_M5 = Path(__file__).resolve().parent
-_ROOT = _M5.parent
-for _p in (_ROOT, _M5):
-    if str(_p) not in sys.path:
-        sys.path.insert(0, str(_p))
+import module5_paths
+
+module5_paths.ensure_module5_paths()
 
 from action_mapping import DISCRETE_BUCKETS
 from rl_agent import RLPokerAgent
@@ -39,7 +37,7 @@ from trainer import evaluate_bb_per_hand, train_self_play
 # --- Defaults tuned for “mostly self + coverage push” over 100M episodes ---
 
 DEFAULT_EPISODES = 100_000_000
-DEFAULT_CHECKPOINT = _M5 / "checkpoints" / "policy_100m_coverage.pkl"
+DEFAULT_CHECKPOINT = module5_paths.MODULE_DIR / "checkpoints" / "policy_100m_coverage.pkl"
 DEFAULT_SAVE_EVERY = 500_000
 # ~85% hands: both seats RL; ~15%: one seat random legal (seat chosen uniformly).
 DEFAULT_RANDOM_LEGAL_OPPONENT_PROB = 0.15
@@ -57,11 +55,11 @@ def _git_commit_short() -> str:
     try:
         out = subprocess.check_output(
             ["git", "rev-parse", "--short", "HEAD"],
-            cwd=str(_ROOT),
+            cwd=str(module5_paths.PROJECT_ROOT),
             text=True,
         )
         return out.strip()
-    except Exception:
+    except (subprocess.CalledProcessError, FileNotFoundError, OSError):
         return "unknown"
 
 

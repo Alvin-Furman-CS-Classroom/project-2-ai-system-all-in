@@ -9,16 +9,16 @@ sampling instead of a single preflop discount heuristic.
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 from typing import Tuple, Dict, Optional, List, Any, Callable
 import math
 import random
 import re
 
-_PROJECT_ROOT = str(Path(__file__).resolve().parent.parent)
-if _PROJECT_ROOT not in sys.path:
-    sys.path.insert(0, _PROJECT_ROOT)
+import project_paths
+
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+project_paths.ensure_paths((_PROJECT_ROOT,))
 
 
 # Opponent tendency base probability tables (fold, call, raise) for a "standard" open.
@@ -553,6 +553,62 @@ def run_trial(
     return lose_payoff
 
 
+def _empty_simulation_result() -> Dict[str, Any]:
+    return {
+        "value_estimate": 0.0,
+        "std": 0.0,
+        "confidence_interval": (0.0, 0.0),
+        "num_trials": 0,
+    }
+
+
+def _mean_std_ci95(values: List[float]) -> Tuple[float, float, Tuple[float, float]]:
+    if not values:
+        return 0.0, 0.0, (0.0, 0.0)
+    n = len(values)
+    mean = sum(values) / n
+    if n > 1:
+        var = sum((v - mean) ** 2 for v in values) / (n - 1)
+        std = math.sqrt(var)
+        margin = 1.96 * std / math.sqrt(n)
+    else:
+        std = 0.0
+        margin = 0.0
+    return mean, std, (mean - margin, mean + margin)
+
+
+def _build_postflop_equity_getter(
+    *,
+    hero_hole: Tuple[Any, Any],
+    board: List[Any],
+    opponent_tendency: str,
+    num_trials: int,
+    rng: random.Random,
+) -> Callable[[str, float], float]:
+    """Build a cached postflop equity getter keyed by (mode, bet_size)."""
+    cache: Dict[Tuple[str, float], float] = {}
+
+    def postflop_equity_getter_fn(mode: str, bs: float) -> float:
+        key = (mode, round(float(bs), 4))
+        if key not in cache:
+            if mode == "call":
+                n_s = min(48, max(14, num_trials))
+            else:
+                n_s = min(56, max(18, num_trials + 8))
+            cache[key] = monte_carlo_equity_vs_conditioned_range(
+                hero_hole,
+                list(board),
+                villain_mode=mode,
+                opponent_tendency=opponent_tendency,
+                bet_size=float(bs),
+                rng=rng,
+                num_samples=n_s,
+            )
+        return cache[key]
+
+    return postflop_equity_getter_fn
+
+
 def run_simulation(
     hand: str,
     action: str,
@@ -575,39 +631,20 @@ def run_simulation(
     (importance sampling), with per-(mode,bet_size) caching inside this run.
     """
     if num_trials <= 0:
-        return {
-            "value_estimate": 0.0,
-            "std": 0.0,
-            "confidence_interval": (0.0, 0.0),
-            "num_trials": 0,
-        }
+        return _empty_simulation_result()
 
     rng = random.Random(seed)
     values: List[float] = []
 
     postflop_equity_getter: Optional[Callable[[str, float], float]] = None
     if hero_hole is not None and board is not None and len(board) > 0:
-        cache: Dict[Tuple[str, float], float] = {}
-
-        def postflop_equity_getter_fn(mode: str, bs: float) -> float:
-            key = (mode, round(float(bs), 4))
-            if key not in cache:
-                if mode == "call":
-                    n_s = min(48, max(14, num_trials))
-                else:
-                    n_s = min(56, max(18, num_trials + 8))
-                cache[key] = monte_carlo_equity_vs_conditioned_range(
-                    hero_hole,
-                    list(board),
-                    villain_mode=mode,
-                    opponent_tendency=opponent_tendency,
-                    bet_size=float(bs),
-                    rng=rng,
-                    num_samples=n_s,
-                )
-            return cache[key]
-
-        postflop_equity_getter = postflop_equity_getter_fn
+        postflop_equity_getter = _build_postflop_equity_getter(
+            hero_hole=hero_hole,
+            board=list(board),
+            opponent_tendency=opponent_tendency,
+            num_trials=num_trials,
+            rng=rng,
+        )
 
     for _ in range(num_trials):
         v = run_trial(
@@ -624,19 +661,7 @@ def run_simulation(
         )
         values.append(v)
 
-    mean = sum(values) / num_trials
-    if num_trials > 1:
-        var = sum((v - mean) ** 2 for v in values) / (num_trials - 1)
-        std = math.sqrt(var)
-    else:
-        std = 0.0
-
-    # 95% confidence interval using normal approximation
-    if num_trials > 1:
-        margin = 1.96 * std / math.sqrt(num_trials)
-    else:
-        margin = 0.0
-    ci = (mean - margin, mean + margin)
+    mean, std, ci = _mean_std_ci95(values)
 
     return {
         "value_estimate": mean,
@@ -690,20 +715,7 @@ def run_simulation_for_strategy(
         }
         values.append(result["value_estimate"])
 
-    if values:
-        overall_mean = sum(values) / len(values)
-        if len(values) > 1:
-            var = sum((v - overall_mean) ** 2 for v in values) / (len(values) - 1)
-            overall_std = math.sqrt(var)
-            margin = 1.96 * overall_std / math.sqrt(len(values))
-        else:
-            overall_std = 0.0
-            margin = 0.0
-        overall_ci = (overall_mean - margin, overall_mean + margin)
-    else:
-        overall_mean = 0.0
-        overall_std = 0.0
-        overall_ci = (0.0, 0.0)
+    overall_mean, overall_std, overall_ci = _mean_std_ci95(values)
 
     return {
         "expected_value": overall_mean,

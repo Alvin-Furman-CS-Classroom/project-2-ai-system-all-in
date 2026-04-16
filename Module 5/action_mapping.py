@@ -10,6 +10,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from full_game_engine.hu_hand import HandState, legal_actions
 
+
 def legal_buckets(state: HandState) -> List[str]:
     """
     Representative discrete buckets for the current decision: one entry per *distinct*
@@ -47,68 +48,74 @@ def _closest_raise(state: HandState, target_total: int) -> Optional[Dict[str, An
     return {"kind": "raise_to", "total": best}
 
 
-def map_bucket_to_action(state: HandState, bucket: str) -> Dict[str, Any]:
-    if bucket not in DISCRETE_BUCKETS:
-        raise ValueError(f"Unknown bucket: {bucket}")
+def _first_kind(acts: List[Dict[str, Any]], k: str) -> Optional[Dict[str, Any]]:
+    for a in acts:
+        if a.get("kind") == k:
+            return dict(a)
+    return None
 
-    acts = legal_actions(state)
-    if not acts:
-        raise ValueError("No legal actions")
 
+def _map_fold_bucket(acts: List[Dict[str, Any]]) -> Dict[str, Any]:
+    a = _first_kind(acts, "fold")
+    if a:
+        return a
+    a = _first_kind(acts, "check")
+    if a:
+        return a
+    c = _first_kind(acts, "call")
+    if c:
+        return c
+    return dict(acts[0])
+
+
+def _map_check_call_bucket(state: HandState, acts: List[Dict[str, Any]]) -> Dict[str, Any]:
+    p = state.actor
+    tc = state.to_call(p)
+    if tc == 0:
+        a = _first_kind(acts, "check")
+        if a:
+            return a
+    a = _first_kind(acts, "call")
+    if a:
+        return a
+    a = _first_kind(acts, "check")
+    if a:
+        return a
+    return dict(acts[0])
+
+
+def _map_all_in_bucket(state: HandState, acts: List[Dict[str, Any]]) -> Dict[str, Any]:
+    p = state.actor
+    cur = state.round_contrib[p]
+    stack = state.stacks[p]
+    max_total = cur + stack
+    totals = _raise_totals(state)
+    best_t: Optional[int] = None
+    for t in totals:
+        if t <= max_total and (best_t is None or t > best_t):
+            best_t = t
+    if best_t is not None:
+        return {"kind": "raise_to", "total": best_t}
+    a = _first_kind(acts, "call")
+    if a:
+        return a
+    a = _first_kind(acts, "check")
+    if a:
+        return a
+    return dict(acts[0])
+
+
+def _map_pot_fraction_raise(
+    state: HandState,
+    acts: List[Dict[str, Any]],
+    bucket: str,
+) -> Dict[str, Any]:
     p = state.actor
     tc = state.to_call(p)
     cur = state.round_contrib[p]
     stack = state.stacks[p]
     bb = state.bb_chips
     pot = state.pot
-
-    def first_kind(k: str) -> Optional[Dict[str, Any]]:
-        for a in acts:
-            if a.get("kind") == k:
-                return dict(a)
-        return None
-
-    if bucket == "fold":
-        a = first_kind("fold")
-        if a:
-            return a
-        a = first_kind("check")
-        if a:
-            return a
-        c = first_kind("call")
-        if c:
-            return c
-        return dict(acts[0])
-
-    if bucket == "check_call":
-        if tc == 0:
-            a = first_kind("check")
-            if a:
-                return a
-        a = first_kind("call")
-        if a:
-            return a
-        a = first_kind("check")
-        if a:
-            return a
-        return dict(acts[0])
-
-    if bucket == "all_in":
-        max_total = cur + stack
-        totals = _raise_totals(state)
-        best_t: Optional[int] = None
-        for t in totals:
-            if t <= max_total and (best_t is None or t > best_t):
-                best_t = t
-        if best_t is not None:
-            return {"kind": "raise_to", "total": best_t}
-        a = first_kind("call")
-        if a:
-            return a
-        a = first_kind("check")
-        if a:
-            return a
-        return dict(acts[0])
 
     frac = {
         "bet_raise_0.5_pot": 0.5,
@@ -124,13 +131,32 @@ def map_bucket_to_action(state: HandState, bucket: str) -> Dict[str, Any]:
     if ra is not None:
         return ra
     if tc > 0:
-        a = first_kind("call")
+        a = _first_kind(acts, "call")
         if a:
             return a
-    a = first_kind("check")
+    a = _first_kind(acts, "check")
     if a:
         return a
-    a = first_kind("call")
+    a = _first_kind(acts, "call")
     if a:
         return a
     return dict(acts[0])
+
+
+def map_bucket_to_action(state: HandState, bucket: str) -> Dict[str, Any]:
+    if bucket not in DISCRETE_BUCKETS:
+        raise ValueError(f"Unknown bucket: {bucket}")
+
+    acts = legal_actions(state)
+    if not acts:
+        raise ValueError("No legal actions")
+
+    if bucket == "fold":
+        return _map_fold_bucket(acts)
+    if bucket == "check_call":
+        return _map_check_call_bucket(state, acts)
+    if bucket == "all_in":
+        return _map_all_in_bucket(state, acts)
+    if bucket.startswith("bet_raise_"):
+        return _map_pot_fraction_raise(state, acts, bucket)
+    raise ValueError(f"Unhandled bucket: {bucket}")

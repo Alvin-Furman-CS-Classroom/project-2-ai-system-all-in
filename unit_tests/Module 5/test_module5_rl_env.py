@@ -2,16 +2,15 @@
 
 import math
 import random
-import sys
 import tempfile
 import unittest
 from pathlib import Path
 
+import project_paths
+
 ROOT = Path(__file__).resolve().parent.parent.parent
 M5 = ROOT / "Module 5"
-for p in (ROOT, M5):
-    if str(p) not in sys.path:
-        sys.path.insert(0, str(p))
+project_paths.ensure_paths((ROOT, M5))
 
 from action_mapping import DISCRETE_BUCKETS, legal_buckets, map_bucket_to_action
 from full_game_engine.hu_hand import apply_action, legal_actions, new_hand
@@ -96,6 +95,32 @@ class TestSaveLoad(unittest.TestCase):
         self.assertEqual(b.q[("s",)]["fold"], a.q[("s",)]["fold"])
         self.assertEqual(b._training_extra.get("episodes_completed"), 42)
         self.assertEqual(b._training_extra.get("final_button"), 1)
+
+
+class TestRunEpisodeStrictBuckets(unittest.TestCase):
+    def test_strict_rejects_invalid_bucket(self):
+        rng = random.Random(0)
+
+        def bad_select(_state, _enc, _hero):
+            return "not_a_valid_bucket"
+
+        with self.assertRaises(ValueError):
+            run_episode(bad_select, rng, [400, 400], button=0)
+
+    def test_lenient_replaces_invalid_bucket(self):
+        rng = random.Random(1)
+
+        def bad_select(_state, _enc, _hero):
+            return "not_a_valid_bucket"
+
+        res = run_episode(
+            bad_select,
+            rng,
+            [400, 400],
+            button=0,
+            strict_buckets=False,
+        )
+        self.assertGreater(len(res.steps), 0)
 
 
 class TestRunEpisodeRandomOpponent(unittest.TestCase):

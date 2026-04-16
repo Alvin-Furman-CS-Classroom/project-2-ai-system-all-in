@@ -13,15 +13,15 @@ from __future__ import annotations
 
 import os
 import secrets
-import sys
 import random
 import threading
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-ROOT = Path(__file__).resolve().parent.parent
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
+import project_paths
+
+project_paths.ensure_project_root()
+ROOT = project_paths.PROJECT_ROOT
 
 from flask import Flask, jsonify, render_template, request
 

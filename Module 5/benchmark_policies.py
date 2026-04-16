@@ -11,19 +11,17 @@ from __future__ import annotations
 import argparse
 import itertools
 import random
-import sys
 from pathlib import Path
 from typing import Dict, List, Tuple
 
-_M5 = Path(__file__).resolve().parent
-_ROOT = _M5.parent
-for _p in (_ROOT, _M5):
-    if str(_p) not in sys.path:
-        sys.path.insert(0, str(_p))
+import module5_paths
+
+module5_paths.ensure_module5_paths()
 
 from action_mapping import legal_buckets, map_bucket_to_action
 from full_game_engine.hu_hand import apply_action, legal_actions, new_hand
 from rl_agent import RLPokerAgent
+from rl_env import random_combined_stacks
 from state_encoder import encode_from_hand_state
 
 
@@ -33,8 +31,8 @@ def _parse_args() -> argparse.Namespace:
         "--policies",
         nargs="+",
         default=[
-            str(_M5 / "checkpoints" / "optimal.pkl"),
-            str(_M5 / "checkpoints" / "coverage.pkl"),
+            str(module5_paths.MODULE_DIR / "checkpoints" / "optimal.pkl"),
+            str(module5_paths.MODULE_DIR / "checkpoints" / "coverage.pkl"),
         ],
         help="Checkpoint paths (2+). Every pair is benchmarked.",
     )
@@ -45,14 +43,6 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument("--bb-chips", type=int, default=20)
     p.add_argument("--sb-chips", type=int, default=10)
     return p.parse_args()
-
-
-def _random_combined_stacks(total_bb: int, bb_chips: int, rng: random.Random, min_each_bb: int) -> List[int]:
-    total_chips = total_bb * bb_chips
-    lo = min_each_bb * bb_chips
-    hi = total_chips - lo
-    s0 = rng.randint(lo, hi)
-    return [s0, total_chips - s0]
 
 
 def _pick_action(agent: RLPokerAgent, state) -> Dict[str, int]:
@@ -100,11 +90,13 @@ def main() -> None:
         ties = 0
 
         for _ in range(args.hands):
-            stacks = _random_combined_stacks(
+            stacks = random_combined_stacks(
                 args.combined_bb_total,
                 args.bb_chips,
                 rng,
                 args.min_stack_bb,
+                mode="uniform",
+                extreme_prob=0.6,
             )
             state = new_hand(
                 stacks,

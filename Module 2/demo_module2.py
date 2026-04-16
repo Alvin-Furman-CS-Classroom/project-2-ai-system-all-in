@@ -6,12 +6,13 @@ This script demonstrates how Module 2 finds optimal bet sizes using
 optimization and A* search.
 """
 
-import sys
 from pathlib import Path
+
+import project_paths
 
 # Add Module 2 directory to path (demo may be run from project root or from Module 2)
 _module2_dir = Path(__file__).resolve().parent
-sys.path.insert(0, str(_module2_dir))
+project_paths.ensure_paths((_module2_dir,))
 
 from bet_sizing_search import optimal_bet_sizing_search
 

@@ -7,12 +7,13 @@ from __future__ import annotations
 
 import importlib.util
 import random
-import sys
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
+from engine_adapter_utils import first_legal_kind, map_search_recommendation_to_action
 from game_engine.hu_preflop import HandState, legal_actions, random_legal_action
 from game_engine.mc_bot import hole_cards_to_mc_hand, mc_or_random_action
+import project_paths
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -39,8 +40,7 @@ def _load_module1_decider():
 
 def _load_a_star():
     m2 = ROOT / "Module 2"
-    if str(m2) not in sys.path:
-        sys.path.insert(0, str(m2))
+    project_paths.ensure_paths((m2,))
     try:
         from bet_sizing_search import a_star_search  # type: ignore
     except ImportError:
@@ -57,8 +57,7 @@ def _load_module4_choose_with_meta():
     """Import Module 4 ``choose_preflop_action_with_meta`` (folder name has a space)."""
     if not _m4_dir.is_dir():
         return None
-    if str(_m4_dir) not in sys.path:
-        sys.path.insert(0, str(_m4_dir))
+    project_paths.ensure_paths((_m4_dir,))
     try:
         import llm_policy  # type: ignore
 
@@ -85,7 +84,7 @@ def _m4_action(
         enriched = dict(meta)
         enriched["street"] = "preflop"
         return act, enriched
-    except Exception as e:
+    except (RuntimeError, ValueError, TypeError, KeyError) as e:
         return random_legal_action(state, rng), {"fallback": "random_legal", "error": str(e)}
 
 
@@ -124,10 +123,10 @@ def _m12_action(state: HandState, rng: random.Random) -> Dict[str, Any]:
                 opp_bet_bb,
             )
             if not dec.get("playable"):
-                folds = [a for a in legal if a["kind"] == "fold"]
-                if folds:
-                    return folds[0]
-        except Exception:
+                fold = first_legal_kind(legal, "fold")
+                if fold is not None:
+                    return fold
+        except (RuntimeError, ValueError, TypeError, KeyError):
             pass
 
     if _a_star_search is None:
@@ -142,29 +141,17 @@ def _m12_action(state: HandState, rng: random.Random) -> Dict[str, Any]:
             opp_bet_bb,
             pot_size=pot_bb,
         )
-    except Exception:
+    except (RuntimeError, ValueError, TypeError, KeyError):
         return random_legal_action(state, rng)
 
-    action = (res.get("action") or "fold").lower()
-    bet_bb = float(res.get("bet_size") or 0.0)
-
-    if action == "fold":
-        folds = [a for a in legal if a["kind"] == "fold"]
-        if folds:
-            return folds[0]
-    if action == "call":
-        calls = [a for a in legal if a["kind"] == "call"]
-        if calls:
-            return calls[0]
-    if action == "check":
-        checks = [a for a in legal if a["kind"] == "check"]
-        if checks:
-            return checks[0]
-
-    target_total = int(round(bet_bb * bb))
-    raises = [a for a in legal if a["kind"] == "raise_to"]
-    if raises:
-        return min(raises, key=lambda a: abs(a["total"] - target_total))
+    mapped = map_search_recommendation_to_action(
+        legal,
+        action_name=str(res.get("action") or "fold"),
+        bet_size_bb=float(res.get("bet_size") or 0.0),
+        bb_chips=bb,
+    )
+    if mapped is not None:
+        return mapped
 
     return random_legal_action(state, rng)
 
@@ -183,11 +170,11 @@ def pick_bot_action(
     if a == "m12":
         try:
             return _m12_action(state, rng), None
-        except Exception:
+        except (RuntimeError, ValueError, TypeError, KeyError):
             return random_legal_action(state, rng), None
     if a == "m4":
         try:
             return _m4_action(state, rng)
-        except Exception as e:
+        except (RuntimeError, ValueError, TypeError, KeyError) as e:
             return random_legal_action(state, rng), {"fallback": "random_legal", "error": str(e)}
     return mc_or_random_action(state, rng, use_mc=True), None

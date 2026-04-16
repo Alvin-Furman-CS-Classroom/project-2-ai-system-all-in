@@ -8,13 +8,13 @@ Heuristics vs Optimization:
 """
 
 from typing import Tuple, Optional
-import sys
 from pathlib import Path
 
+import project_paths
+
 # Import from same module (guard against duplicate path entries)
-_module2_dir = str(Path(__file__).parent)
-if _module2_dir not in sys.path:
-    sys.path.insert(0, _module2_dir)
+_module2_dir = Path(__file__).parent
+project_paths.ensure_paths((_module2_dir,))
 
 from ev_calculator import calculate_ev, get_hand_equity
 from bet_size_discretization import get_bet_sizes_for_scenario, is_all_in

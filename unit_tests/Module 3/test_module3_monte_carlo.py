@@ -7,14 +7,14 @@ These tests are intentionally lightweight and focus on:
 """
 
 import unittest
-import sys
 import random
 from pathlib import Path
 
+import project_paths
+
 # Project root (for full_game_engine) and Module 3
 _ROOT = Path(__file__).resolve().parent.parent.parent
-sys.path.insert(0, str(_ROOT))
-sys.path.insert(0, str(_ROOT / "Module 3"))
+project_paths.ensure_paths((_ROOT, _ROOT / "Module 3"))
 
 from full_game_engine.cards import Card
 

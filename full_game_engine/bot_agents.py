@@ -6,26 +6,25 @@ from __future__ import annotations
 
 import os
 import random
-import sys
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
+from engine_adapter_utils import first_legal_kind, map_search_recommendation_to_action
 from full_game_engine.hu_hand import HandState, legal_actions, random_legal_action
 from full_game_engine.mc_bot import hole_cards_to_mc_hand, mc_or_random_action
+import project_paths
 
 ROOT = Path(__file__).resolve().parent.parent
 
 M5 = ROOT / "Module 5"
-if str(M5) not in sys.path:
-    sys.path.insert(0, str(M5))
+project_paths.ensure_paths((M5,))
 
 from action_mapping import legal_buckets, map_bucket_to_action  # type: ignore  # noqa: E402
 from rl_agent import RLPokerAgent  # type: ignore  # noqa: E402
 from state_encoder import encode_from_hand_state  # type: ignore  # noqa: E402
 
 _M2_DIR = ROOT / "Module 2"
-if str(_M2_DIR) not in sys.path:
-    sys.path.insert(0, str(_M2_DIR))
+project_paths.ensure_paths((_M2_DIR,))
 try:
     from bet_sizing_search import optimal_bet_sizing_search  # type: ignore  # noqa: E402
 except ImportError:  # pragma: no cover
@@ -73,16 +72,6 @@ def _board_features(state: HandState, seat: int) -> Dict[str, Any]:
     }
 
 
-def _closest_raise_action(state: HandState, target_total_bb: float) -> Optional[Dict[str, Any]]:
-    acts = [a for a in legal_actions(state) if a.get("kind") == "raise_to"]
-    if not acts:
-        return None
-    bb = float(state.bb_chips)
-    target_total = int(round(target_total_bb * bb))
-    best = min(acts, key=lambda a: abs(int(a["total"]) - target_total))
-    return dict(best)
-
-
 def _m2_action(state: HandState, rng: random.Random) -> Dict[str, Any]:
     """Module 2 fast heuristic full-hand adapter."""
     if optimal_bet_sizing_search is None:
@@ -119,36 +108,20 @@ def _m2_action(state: HandState, rng: random.Random) -> Dict[str, Any]:
             pot_size=context["pot_size"],
             full_hand_context=context,
         )
-    except Exception:
+    except (RuntimeError, ValueError, TypeError, KeyError):
         return random_legal_action(state, rng)
 
-    action = str(rec.get("action", "fold"))
-    if action == "fold":
-        for a in acts:
-            if a.get("kind") == "fold":
-                return dict(a)
-        for a in acts:
-            if a.get("kind") == "check":
-                return dict(a)
-        return dict(acts[0])
-    if action == "call":
-        for a in acts:
-            if a.get("kind") == "call":
-                return dict(a)
-        for a in acts:
-            if a.get("kind") == "check":
-                return dict(a)
-        return dict(acts[0])
-    # open/raise -> closest legal raise total.
-    raise_act = _closest_raise_action(state, float(rec.get("bet_size", 0.0)))
-    if raise_act is not None:
-        return raise_act
-    for a in acts:
-        if a.get("kind") == "call":
-            return dict(a)
-    for a in acts:
-        if a.get("kind") == "check":
-            return dict(a)
+    mapped = map_search_recommendation_to_action(
+        acts,
+        action_name=str(rec.get("action", "fold")),
+        bet_size_bb=float(rec.get("bet_size", 0.0)),
+        bb_chips=float(state.bb_chips),
+    )
+    if mapped is not None:
+        return mapped
+    call_or_check = first_legal_kind(acts, "call", "check")
+    if call_or_check is not None:
+        return call_or_check
     return dict(acts[0])
 
 
@@ -199,7 +172,7 @@ def _load_rl_agent(agent_key: str) -> Optional[RLPokerAgent]:
         return None
     try:
         agent = RLPokerAgent.load(ckpt)
-    except Exception:
+    except (ValueError, OSError):
         _RL_AGENTS[agent_key] = None
         return None
     agent.epsilon = 0.0
@@ -211,8 +184,7 @@ def _load_module4_choose_with_meta():
     """Import Module 4 ``choose_preflop_action_with_meta`` (folder has a space)."""
     if not _M4_DIR.is_dir():
         return None
-    if str(_M4_DIR) not in sys.path:
-        sys.path.insert(0, str(_M4_DIR))
+    project_paths.ensure_paths((_M4_DIR,))
     try:
         import llm_policy  # type: ignore
 
@@ -235,7 +207,7 @@ def _rl_action(state: HandState, rng: random.Random, agent_key: str) -> Dict[str
     bucket = agent.select_action_masked(enc, lbs)
     try:
         return map_bucket_to_action(state, bucket)
-    except Exception:
+    except (ValueError, KeyError):
         return random_legal_action(state, rng)
 
 
@@ -257,7 +229,7 @@ def _m4_action(
         enriched = dict(meta)
         enriched["street"] = str(state.street)
         return act, enriched
-    except Exception as e:
+    except (RuntimeError, ValueError, TypeError, KeyError) as e:
         return random_legal_action(state, rng), {"fallback": "random_legal", "error": str(e)}
 
 
@@ -277,5 +249,5 @@ def pick_bot_action(
         if a == "m2":
             return _m2_action(state, rng), None
         return _rl_action(state, rng, a), None
-    except Exception:
+    except (RuntimeError, ValueError, TypeError, KeyError):
         return random_legal_action(state, rng), None

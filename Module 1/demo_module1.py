@@ -6,11 +6,12 @@ This script demonstrates various scenarios showing how Module 1 evaluates
 hand playability based on position, stack size, and opponent tendencies.
 """
 
-import sys
 from pathlib import Path
 
+import project_paths
+
 # Add Module 1 to path
-sys.path.insert(0, str(Path(__file__).parent / "Module 1"))
+project_paths.ensure_paths((Path(__file__).resolve().parent,))
 
 from propositional_logic import propositional_logic_hand_decider
 

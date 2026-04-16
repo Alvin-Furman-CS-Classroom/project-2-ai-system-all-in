@@ -6,12 +6,13 @@ Shows how Module 3 uses Monte Carlo simulation only to compute optimal opening
 actions. Outputs strategy valueand confidence intervals.
 """
 
-import sys
 from pathlib import Path
+
+import project_paths
 
 # Add Module 3 directory to path so imports work
 _module3_dir = Path(__file__).resolve().parent
-sys.path.insert(0, str(_module3_dir))
+project_paths.ensure_paths((_module3_dir,))
 
 from bet_sizing_optimizer import optimize_opening_actions
 

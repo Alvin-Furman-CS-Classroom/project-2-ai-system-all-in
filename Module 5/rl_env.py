@@ -7,20 +7,17 @@ Train here; integrate with web_app / bot routing later.
 from __future__ import annotations
 
 import random
-import sys
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Callable, List, Optional, Tuple
 
-_M5 = Path(__file__).resolve().parent
-_ROOT = _M5.parent
-for _p in (_ROOT, _M5):
-    if str(_p) not in sys.path:
-        sys.path.insert(0, str(_p))
+import module5_paths
+
+module5_paths.ensure_module5_paths()
 
 from full_game_engine.hu_hand import HandState, apply_action, legal_actions, new_hand, random_legal_action
 
 from action_mapping import DISCRETE_BUCKETS, map_bucket_to_action
+from rl_agent import ActionBucket, StateKey
 from state_encoder import encode_from_hand_state
 
 
@@ -28,8 +25,8 @@ from state_encoder import encode_from_hand_state
 class StepRecord:
     """One decision: state encoding, bucket, and acting seat."""
 
-    enc: Tuple
-    bucket: str
+    enc: StateKey
+    bucket: ActionBucket
     hero: int
 
 
@@ -46,13 +43,14 @@ def is_betting(state: HandState) -> bool:
 
 
 def run_episode(
-    select_bucket: Callable[..., str],
+    select_bucket: Callable[..., ActionBucket],
     rng: random.Random,
     stacks: List[int],
     button: int,
     sb_chips: int = 10,
     bb_chips: int = 20,
     random_legal_seat: Optional[int] = None,
+    strict_buckets: bool = True,
 ) -> EpisodeResult:
     """
     Play one hand of self-play.
@@ -61,6 +59,10 @@ def run_episode(
     policy. If ``random_legal_seat`` is 0 or 1, that seat instead picks a uniform random
     legal engine action (no discrete bucket); those decisions are **not** recorded in
     ``steps`` so training updates apply only to the RL seat.
+
+    If ``strict_buckets`` is True (default), ``select_bucket`` must return a label in
+    ``DISCRETE_BUCKETS``; otherwise :class:`ValueError` is raised. If False, an invalid
+    label is replaced with a random bucket (legacy tolerance for noisy policies).
     """
     if random_legal_seat is not None and random_legal_seat not in (0, 1):
         raise ValueError("random_legal_seat must be None, 0, or 1")
@@ -80,6 +82,11 @@ def run_episode(
             enc = encode_from_hand_state(state, hero)
             bucket = select_bucket(state, enc, hero)
             if bucket not in DISCRETE_BUCKETS:
+                if strict_buckets:
+                    raise ValueError(
+                        f"select_bucket returned invalid bucket {bucket!r}; "
+                        f"expected one of {DISCRETE_BUCKETS}"
+                    )
                 bucket = rng.choice(DISCRETE_BUCKETS)
             action = map_bucket_to_action(state, bucket)
             steps.append(StepRecord(enc=enc, bucket=bucket, hero=hero))
@@ -96,6 +103,10 @@ def run_episode(
 
 def new_starting_stacks(starting_bb_each: int, bb_chips: int) -> List[int]:
     return [starting_bb_each * bb_chips, starting_bb_each * bb_chips]
+
+
+# ``extreme_mix`` samples from the low or high *quarter* of valid stack splits (see README).
+_STACK_SPLIT_QUARTERS = 4
 
 
 def random_combined_stacks(
@@ -134,7 +145,7 @@ def random_combined_stacks(
         return [s0, total_chips - s0]
 
     if rng.random() < extreme_prob:
-        quarter = max(1, span // 4)
+        quarter = max(1, span // _STACK_SPLIT_QUARTERS)
         if rng.random() < 0.5:
             s0 = rng.randint(lo, min(lo + quarter, hi))
         else:

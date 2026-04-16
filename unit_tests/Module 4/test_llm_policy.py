@@ -3,17 +3,14 @@
 from __future__ import annotations
 
 import random
-import sys
 import unittest
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent.parent
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
+import project_paths
 
+ROOT = Path(__file__).resolve().parent.parent.parent
 _M4 = ROOT / "Module 4"
-if str(_M4) not in sys.path:
-    sys.path.insert(0, str(_M4))
+project_paths.ensure_paths((ROOT, _M4))
 
 from game_engine.hu_preflop import apply_action, legal_actions, new_hand
 from game_engine.mc_bot import hole_cards_to_mc_hand

@@ -19,11 +19,9 @@ import subprocess
 import sys
 from pathlib import Path
 
-_M5 = Path(__file__).resolve().parent
-_ROOT = _M5.parent
-for _p in (_ROOT, _M5):
-    if str(_p) not in sys.path:
-        sys.path.insert(0, str(_p))
+import module5_paths
+
+module5_paths.ensure_module5_paths()
 
 from action_mapping import DISCRETE_BUCKETS
 from rl_agent import RLPokerAgent
@@ -34,11 +32,11 @@ def _git_commit_short() -> str:
     try:
         out = subprocess.check_output(
             ["git", "rev-parse", "--short", "HEAD"],
-            cwd=str(_ROOT),
+            cwd=str(module5_paths.PROJECT_ROOT),
             text=True,
         )
         return out.strip()
-    except Exception:
+    except (subprocess.CalledProcessError, FileNotFoundError, OSError):
         return "unknown"
 
 
@@ -87,7 +85,7 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument(
         "--checkpoint",
         type=Path,
-        default=_M5 / "checkpoints" / "policy.pkl",
+        default=module5_paths.MODULE_DIR / "checkpoints" / "policy.pkl",
         help="Policy pickle path (save / resume)",
     )
     p.add_argument(

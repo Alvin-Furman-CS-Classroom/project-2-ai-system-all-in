@@ -16,27 +16,17 @@ from __future__ import annotations
 import argparse
 import pickle
 import random
-import sys
 from collections import Counter
 from pathlib import Path
 from typing import Any, Set, Tuple
 
-_M5 = Path(__file__).resolve().parent
-_ROOT = _M5.parent
-for _p in (_ROOT, _M5):
-    if str(_p) not in sys.path:
-        sys.path.insert(0, str(_p))
+import module5_paths
+
+module5_paths.ensure_module5_paths()
 
 from full_game_engine.hu_hand import apply_action, legal_actions, new_hand
 from rl_agent import RLPokerAgent
 from state_encoder import encode_from_hand_state
-
-
-def _bucket_linear(x: float, edges: Tuple[float, ...]) -> int:
-    for i, e in enumerate(edges):
-        if x < e:
-            return i
-    return len(edges)
 
 
 def _parse_args() -> argparse.Namespace:
@@ -46,7 +36,7 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument(
         "--checkpoint",
         type=Path,
-        default=_M5 / "checkpoints" / "my_policy.pkl",
+        default=module5_paths.MODULE_DIR / "checkpoints" / "my_policy.pkl",
         help="Path to Module 5 policy checkpoint",
     )
     p.add_argument(
@@ -113,48 +103,7 @@ def _safe_get_hand_kind(state: Tuple[Any, ...]) -> str:
     return "unknown"
 
 
-def _encode_legacy_from_hand_state(state: Any, hero: int) -> Tuple[Any, ...]:
-    """
-    Legacy encoding shape: (hand, street, position, sb, ob, pb, tb, bf)
-    (must match keys in legacy checkpoints).
-    """
-    bb = float(state.bb_chips)
-    c0, c1 = state.hole_cards[hero]
-    r0, r1 = c0.rank, c1.rank
-    if r0 == r1:
-        hand = ("pair", _bucket_linear(float(r0), (5.0, 8.0, 11.0)))
-    else:
-        hi, lo = max(r0, r1), min(r0, r1)
-        suited = 1 if c0.suit == c1.suit else 0
-        hand = ("np", _bucket_linear(float(hi), (6.0, 8.0, 11.0)), _bucket_linear(float(lo), (5.0, 8.0)), suited)
-
-    position = 1 if hero == state.button else 0
-    my_stack_bb = state.stacks[hero] / bb
-    opp_stack_bb = state.stacks[1 - hero] / bb
-    pot_bb = state.pot / bb
-    tc_bb = state.to_call(hero) / bb
-
-    sb = _bucket_linear(my_stack_bb, (15.0, 40.0, 100.0))
-    ob = _bucket_linear(opp_stack_bb, (15.0, 40.0, 100.0))
-    pb = _bucket_linear(pot_bb, (2.0, 8.0, 24.0))
-    tb = _bucket_linear(tc_bb, (1.0, 3.0, 8.0))
-
-    board = tuple(state.board)
-    n = len(board)
-    if n == 0:
-        bf = (0, 0, 0)
-    else:
-        ranks = [c.rank for c in board]
-        suits = [c.suit for c in board]
-        paired = 1 if max(Counter(ranks).values()) >= 2 else 0
-        flush_y = 1 if max(Counter(suits).values()) >= 3 else 0
-        bf = (min(n, 5), paired, flush_y)
-
-    return (hand, state.street, position, sb, ob, pb, tb, bf)
-
-
 def _sim_reachable_states(
-    version: str,
     episodes: int,
     seed: int,
     combined_bb_total: float,
@@ -184,10 +133,8 @@ def _sim_reachable_states(
         button = 1 - button
         while state.phase in {"preflop", "flop", "turn", "river"}:
             hero = state.actor
-            if version == "coarse":
-                reachable.add(encode_from_hand_state(state, hero))
-            else:
-                reachable.add(_encode_legacy_from_hand_state(state, hero))
+            # Single source of truth: `state_encoder.encode_from_hand_state` (matches training keys).
+            reachable.add(encode_from_hand_state(state, hero))
             acts = legal_actions(state)
             if not acts:
                 break
@@ -217,7 +164,6 @@ def main() -> None:
             break
 
     sim_reachable = _sim_reachable_states(
-        version=version,
         episodes=args.reachable_sim_episodes,
         seed=args.reachable_sim_seed,
         combined_bb_total=args.combined_bb_total,

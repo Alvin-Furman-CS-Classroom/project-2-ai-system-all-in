@@ -248,7 +248,7 @@ def choose_legal_index(
         text = _build_choice_prompt(base_prompt, attempt, n_legal - 1)
         try:
             data = _call_ollama(text)
-        except Exception as ollama_err:
+        except (RuntimeError, ValueError, TimeoutError, urllib.error.URLError, OSError) as ollama_err:
             last_err = ollama_err
             meta.setdefault("error", _friendly_api_error(ollama_err))
             continue
@@ -259,7 +259,7 @@ def choose_legal_index(
             if attempt == 1:
                 meta["repaired"] = True
             return idx, meta
-        except Exception as parse_err:
+        except (ValueError, TypeError, KeyError, json.JSONDecodeError) as parse_err:
             last_err = parse_err
             meta.setdefault("error", _friendly_api_error(parse_err))
 

@@ -6,14 +6,10 @@ Demo: Module 5 RL agent training on full_game_engine (self-play).
 from __future__ import annotations
 
 import random
-import sys
-from pathlib import Path
 
-_M5 = Path(__file__).resolve().parent
-_ROOT = _M5.parent
-for _p in (_ROOT, _M5):
-    if str(_p) not in sys.path:
-        sys.path.insert(0, str(_p))
+import module5_paths
+
+module5_paths.ensure_module5_paths()
 
 from action_mapping import DISCRETE_BUCKETS
 from rl_agent import RLPokerAgent

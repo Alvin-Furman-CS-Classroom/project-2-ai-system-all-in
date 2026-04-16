@@ -25,15 +25,15 @@ import itertools
 import math
 import random
 import statistics
-import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-ROOT = Path(__file__).resolve().parent.parent
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
+import project_paths
+
+project_paths.ensure_project_root()
+ROOT = project_paths.PROJECT_ROOT
 
 from full_game_engine.bot_agents import pick_bot_action
 from full_game_engine.hu_hand import apply_action, legal_actions, new_hand, random_legal_action
@@ -98,7 +98,7 @@ def _pick_action_with_metrics(
             meta = None
         else:
             act, meta = pick_bot_action(agent, state, rng)
-    except Exception:
+    except (RuntimeError, ValueError, TypeError, KeyError):
         metrics.decision_errors += 1
         metrics.fallbacks_to_random += 1
         act = random_legal_action(state, rng)

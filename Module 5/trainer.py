@@ -5,23 +5,72 @@ Training utilities for Module 5: self-play on full_game_engine.
 from __future__ import annotations
 
 import random
-import sys
 from collections import defaultdict
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Dict, Iterable, List, MutableMapping, Optional, Tuple
 
-_M5 = Path(__file__).resolve().parent
-_ROOT = _M5.parent
-for _p in (_ROOT, _M5):
-    if str(_p) not in sys.path:
-        sys.path.insert(0, str(_p))
+import module5_paths
+
+module5_paths.ensure_module5_paths()
 
 from action_mapping import legal_buckets
-from rl_agent import RLPokerAgent
-from rl_env import new_starting_stacks, random_combined_stacks, run_episode
+from rl_agent import ActionBucket, RLPokerAgent, StateKey
+from rl_env import EpisodeResult, new_starting_stacks, random_combined_stacks, run_episode
 
-Transition = Tuple[object, str, float, object, bool]
+Transition = Tuple[StateKey, ActionBucket, float, StateKey, bool]
+
+
+def _sample_episode_stacks(
+    rng: random.Random,
+    *,
+    randomize_stacks: bool,
+    starting_bb_each: int,
+    combined_bb_total: int,
+    min_stack_bb_each: int,
+    bb_chips: int,
+    stack_sampling_mode: str,
+    stack_sampling_extreme_prob: float,
+) -> List[int]:
+    """Starting stacks for one hand (equal stacks or random combined-bb split)."""
+    if randomize_stacks:
+        return random_combined_stacks(
+            combined_bb_total,
+            bb_chips,
+            rng,
+            min_stack_bb_each,
+            mode=stack_sampling_mode,
+            extreme_prob=stack_sampling_extreme_prob,
+        )
+    return new_starting_stacks(starting_bb_each, bb_chips)
+
+
+def _apply_monte_carlo_episode_updates(
+    agent: RLPokerAgent,
+    res: EpisodeResult,
+    visit_counts: Dict[Tuple[StateKey, ActionBucket], int],
+) -> None:
+    r0, r1 = res.stacks_delta_bb
+    for step in res.steps:
+        g = r0 if step.hero == 0 else r1
+        agent.update_monte_carlo(step.enc, step.bucket, g)
+        visit_counts[(step.enc, step.bucket)] += 1
+
+
+def _apply_td_episode_updates(
+    agent: RLPokerAgent,
+    res: EpisodeResult,
+    visit_counts: Dict[Tuple[StateKey, ActionBucket], int],
+) -> None:
+    r0, r1 = res.stacks_delta_bb
+    for i, step in enumerate(res.steps):
+        g = r0 if step.hero == 0 else r1
+        is_last = i == len(res.steps) - 1
+        if is_last:
+            agent.update(step.enc, step.bucket, g, step.enc, True)
+        else:
+            nxt = res.steps[i + 1].enc
+            agent.update(step.enc, step.bucket, 0.0, nxt, False)
+        visit_counts[(step.enc, step.bucket)] += 1
 
 
 @dataclass
@@ -61,6 +110,83 @@ def epsilon_for_episode(
         return epsilon_end
     t = ep / max(decay_n - 1, 1)
     return epsilon_start + (epsilon_end - epsilon_start) * t
+
+
+def _build_training_selector(
+    agent: RLPokerAgent,
+    *,
+    use_masked_exploration: bool,
+    visit_counts: Dict[Tuple[StateKey, ActionBucket], int],
+    count_bonus_c: float,
+):
+    """Create the action-selection callback used by ``run_episode`` during training."""
+
+    def select(state, enc, hero: int) -> ActionBucket:
+        if use_masked_exploration:
+            return agent.select_action_masked_with_bonus(
+                enc,
+                legal_buckets(state),
+                visit_counts=visit_counts,
+                bonus_c=count_bonus_c,
+            )
+        return agent.select_action(enc)
+
+    return select
+
+
+def _sample_random_legal_seat(
+    rng: random.Random, random_legal_opponent_prob: float
+) -> Optional[int]:
+    """Sample whether this episode uses one random-legal seat."""
+    if random_legal_opponent_prob > 0.0 and rng.random() < random_legal_opponent_prob:
+        return rng.randint(0, 1)
+    return None
+
+
+def _run_training_episode(
+    agent: RLPokerAgent,
+    *,
+    rng: random.Random,
+    button: int,
+    sb_chips: int,
+    bb_chips: int,
+    randomize_stacks: bool,
+    starting_bb_each: int,
+    combined_bb_total: int,
+    min_stack_bb_each: int,
+    stack_sampling_mode: str,
+    stack_sampling_extreme_prob: float,
+    use_masked_exploration: bool,
+    visit_counts: Dict[Tuple[StateKey, ActionBucket], int],
+    count_bonus_c: float,
+    random_legal_opponent_prob: float,
+) -> EpisodeResult:
+    """Play one self-play episode and return the recorded result."""
+    stacks = _sample_episode_stacks(
+        rng,
+        randomize_stacks=randomize_stacks,
+        starting_bb_each=starting_bb_each,
+        combined_bb_total=combined_bb_total,
+        min_stack_bb_each=min_stack_bb_each,
+        bb_chips=bb_chips,
+        stack_sampling_mode=stack_sampling_mode,
+        stack_sampling_extreme_prob=stack_sampling_extreme_prob,
+    )
+    selector = _build_training_selector(
+        agent,
+        use_masked_exploration=use_masked_exploration,
+        visit_counts=visit_counts,
+        count_bonus_c=count_bonus_c,
+    )
+    return run_episode(
+        selector,
+        rng,
+        stacks,
+        button,
+        sb_chips=sb_chips,
+        bb_chips=bb_chips,
+        random_legal_seat=_sample_random_legal_seat(rng, random_legal_opponent_prob),
+    )
 
 
 def train_self_play(
@@ -119,64 +245,35 @@ def train_self_play(
     seat0_bb: List[float] = []
     button = initial_button & 1
     sched = epsilon_schedule_total if epsilon_schedule_total is not None else episodes
-    visit_counts: Dict[Tuple[object, str], int] = defaultdict(int)
+    visit_counts: Dict[Tuple[StateKey, ActionBucket], int] = defaultdict(int)
 
     for ep in range(episodes):
         global_ep = episode_index_start + ep
         agent.epsilon = epsilon_for_episode(global_ep, sched, epsilon_start, epsilon_end, decay_fraction)
-        if randomize_stacks:
-            stacks = random_combined_stacks(
-                combined_bb_total,
-                bb_chips,
-                rng,
-                min_stack_bb_each,
-                mode=stack_sampling_mode,
-                extreme_prob=stack_sampling_extreme_prob,
-            )
-        else:
-            stacks = new_starting_stacks(starting_bb_each, bb_chips)
-
-        def select(state, enc, hero: int) -> str:
-            if use_masked_exploration:
-                return agent.select_action_masked_with_bonus(
-                    enc,
-                    legal_buckets(state),
-                    visit_counts=visit_counts,
-                    bonus_c=count_bonus_c,
-                )
-            return agent.select_action(enc)
-
-        rls = None
-        if random_legal_opponent_prob > 0.0 and rng.random() < random_legal_opponent_prob:
-            rls = rng.randint(0, 1)
-
-        res = run_episode(
-            select,
-            rng,
-            stacks,
-            button,
+        res = _run_training_episode(
+            agent,
+            rng=rng,
+            button=button,
             sb_chips=sb_chips,
             bb_chips=bb_chips,
-            random_legal_seat=rls,
+            randomize_stacks=randomize_stacks,
+            starting_bb_each=starting_bb_each,
+            combined_bb_total=combined_bb_total,
+            min_stack_bb_each=min_stack_bb_each,
+            stack_sampling_mode=stack_sampling_mode,
+            stack_sampling_extreme_prob=stack_sampling_extreme_prob,
+            use_masked_exploration=use_masked_exploration,
+            visit_counts=visit_counts,
+            count_bonus_c=count_bonus_c,
+            random_legal_opponent_prob=random_legal_opponent_prob,
         )
 
-        r0, r1 = res.stacks_delta_bb
         if use_monte_carlo:
-            for step in res.steps:
-                g = r0 if step.hero == 0 else r1
-                agent.update_monte_carlo(step.enc, step.bucket, g)
-                visit_counts[(step.enc, step.bucket)] += 1
+            _apply_monte_carlo_episode_updates(agent, res, visit_counts)
         else:
-            for i, step in enumerate(res.steps):
-                g = r0 if step.hero == 0 else r1
-                is_last = i == len(res.steps) - 1
-                if is_last:
-                    agent.update(step.enc, step.bucket, g, step.enc, True)
-                else:
-                    nxt = res.steps[i + 1].enc
-                    agent.update(step.enc, step.bucket, 0.0, nxt, False)
-                visit_counts[(step.enc, step.bucket)] += 1
+            _apply_td_episode_updates(agent, res, visit_counts)
 
+        r0, _ = res.stacks_delta_bb
         seat0_bb.append(r0)
         button = 1 - button
 
@@ -215,19 +312,18 @@ def evaluate_bb_per_hand(
     total1 = 0.0
 
     for _ in range(episodes):
-        if randomize_stacks:
-            stacks = random_combined_stacks(
-                combined_bb_total,
-                bb_chips,
-                rng,
-                min_stack_bb_each,
-                mode=stack_sampling_mode,
-                extreme_prob=stack_sampling_extreme_prob,
-            )
-        else:
-            stacks = new_starting_stacks(starting_bb_each, bb_chips)
+        stacks = _sample_episode_stacks(
+            rng,
+            randomize_stacks=randomize_stacks,
+            starting_bb_each=starting_bb_each,
+            combined_bb_total=combined_bb_total,
+            min_stack_bb_each=min_stack_bb_each,
+            bb_chips=bb_chips,
+            stack_sampling_mode=stack_sampling_mode,
+            stack_sampling_extreme_prob=stack_sampling_extreme_prob,
+        )
 
-        def select(state, enc, hero: int) -> str:
+        def select(state, enc, hero: int) -> ActionBucket:
             if use_masked_exploration:
                 return agent.select_action_masked(enc, legal_buckets(state))
             return agent.select_action(enc)

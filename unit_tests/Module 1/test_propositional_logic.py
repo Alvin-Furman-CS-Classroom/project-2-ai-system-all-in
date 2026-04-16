@@ -11,11 +11,12 @@ Tests cover:
 """
 
 import unittest
-import sys
 from pathlib import Path
 
+import project_paths
+
 # Add parent directory to path to import module
-sys.path.insert(0, str(Path(__file__).parent.parent.parent / "Module 1"))
+project_paths.ensure_paths((Path(__file__).parent.parent.parent / "Module 1",))
 
 from propositional_logic import (
     propositional_logic_hand_decider,

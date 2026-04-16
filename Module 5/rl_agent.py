@@ -1,5 +1,8 @@
 """
-Module 5 RL agent (tabular Q-learning scaffold).
+Module 5 RL agent: tabular Q-learning with optional every-visit Monte Carlo updates.
+
+Provides epsilon-greedy action selection (full action set or masked to legal buckets),
+TD and Monte Carlo update rules, and pickle save/load for deployment and long training runs.
 """
 
 from __future__ import annotations
@@ -10,17 +13,18 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
-
-Action = str
-State = Tuple
+# Discrete bucket label (e.g. ``"fold"``, ``"bet_raise_1.0_pot"``).
+ActionBucket = str
+# Hashable tuple from ``state_encoder.encode_from_hand_state`` (tabular Q key).
+StateKey = Tuple[Any, ...]
 
 
 class RLPokerAgent:
-    """Simple epsilon-greedy tabular Q-learning agent."""
+    """Epsilon-greedy tabular agent with TD or Monte Carlo learning updates."""
 
     def __init__(
         self,
-        actions: List[Action],
+        actions: List[ActionBucket],
         alpha: float = 0.1,
         gamma: float = 0.95,
         epsilon: float = 0.1,
@@ -29,12 +33,12 @@ class RLPokerAgent:
         self.alpha = alpha
         self.gamma = gamma
         self.epsilon = epsilon
-        self.q: Dict[State, Dict[Action, float]] = defaultdict(
+        self.q: Dict[StateKey, Dict[ActionBucket, float]] = defaultdict(
             lambda: {a: 0.0 for a in self.actions}
         )
         self._training_extra: Dict[str, Any] = {}
 
-    def select_action(self, state: State) -> Action:
+    def select_action(self, state: StateKey) -> ActionBucket:
         """Epsilon-greedy over the full discrete set (no legality mask)."""
         if random.random() < self.epsilon:
             return random.choice(self.actions)
@@ -43,7 +47,9 @@ class RLPokerAgent:
         best_actions = [a for a, v in values.items() if v == best]
         return random.choice(best_actions)
 
-    def select_action_masked(self, state: State, legal_buckets: Sequence[str]) -> Action:
+    def select_action_masked(
+        self, state: StateKey, legal_buckets: Sequence[str]
+    ) -> ActionBucket:
         """
         Epsilon-greedy restricted to buckets that are legal / non-redundant for this spot.
 
@@ -52,23 +58,23 @@ class RLPokerAgent:
         """
         if not legal_buckets:
             return self.select_action(state)
-        lb = [b for b in legal_buckets if b in self.actions]
-        if not lb:
+        masked = [b for b in legal_buckets if b in self.actions]
+        if not masked:
             return self.select_action(state)
         if random.random() < self.epsilon:
-            return random.choice(lb)
+            return random.choice(masked)
         values = self.q[state]
-        best_val = max(values.get(b, 0.0) for b in lb)
-        best = [b for b in lb if values.get(b, 0.0) == best_val]
+        best_val = max(values.get(b, 0.0) for b in masked)
+        best = [b for b in masked if values.get(b, 0.0) == best_val]
         return random.choice(best)
 
     def select_action_masked_with_bonus(
         self,
-        state: State,
+        state: StateKey,
         legal_buckets: Sequence[str],
-        visit_counts: Dict[Tuple[State, Action], int],
+        visit_counts: Dict[Tuple[StateKey, ActionBucket], int],
         bonus_c: float,
-    ) -> Action:
+    ) -> ActionBucket:
         """
         Epsilon-greedy on legal buckets with count-based exploration bonus.
 
@@ -76,14 +82,14 @@ class RLPokerAgent:
         """
         if bonus_c <= 0.0:
             return self.select_action_masked(state, legal_buckets)
-        lb = [b for b in legal_buckets if b in self.actions]
-        if not lb:
+        masked = [b for b in legal_buckets if b in self.actions]
+        if not masked:
             return self.select_action(state)
         if random.random() < self.epsilon:
-            return random.choice(lb)
+            return random.choice(masked)
         values = self.q[state]
         scored = []
-        for b in lb:
+        for b in masked:
             n = visit_counts.get((state, b), 0)
             score = values.get(b, 0.0) + (bonus_c / ((1 + n) ** 0.5))
             scored.append((b, score))
@@ -93,10 +99,10 @@ class RLPokerAgent:
 
     def update(
         self,
-        state: State,
-        action: Action,
+        state: StateKey,
+        action: ActionBucket,
         reward: float,
-        next_state: State,
+        next_state: StateKey,
         done: bool,
     ) -> None:
         """One-step Q-learning update."""
@@ -105,7 +111,7 @@ class RLPokerAgent:
         target = reward + self.gamma * next_max
         self.q[state][action] = q_sa + self.alpha * (target - q_sa)
 
-    def update_monte_carlo(self, state: State, action: Action, g: float) -> None:
+    def update_monte_carlo(self, state: StateKey, action: ActionBucket, g: float) -> None:
         """Every-visit Monte Carlo target ``g`` (e.g. hand net BB for the acting player)."""
         q_sa = self.q[state][action]
         self.q[state][action] = q_sa + self.alpha * (g - q_sa)
@@ -120,7 +126,7 @@ class RLPokerAgent:
         Uses pickle (tuple state keys). Only load files you trust.
         """
         p = Path(path)
-        q_plain: Dict[State, Dict[Action, float]] = {k: dict(v) for k, v in self.q.items()}
+        q_plain: Dict[StateKey, Dict[ActionBucket, float]] = {k: dict(v) for k, v in self.q.items()}
         payload = {
             "version": 1,
             "actions": list(self.actions),
@@ -137,8 +143,12 @@ class RLPokerAgent:
     @classmethod
     def load(cls, path: Union[str, Path]) -> "RLPokerAgent":
         """Load a policy saved with :meth:`save`. Set ``epsilon`` on the result for eval vs explore."""
-        with Path(path).open("rb") as f:
-            payload = pickle.load(f)
+        p = Path(path)
+        try:
+            with p.open("rb") as f:
+                payload = pickle.load(f)
+        except (pickle.UnpicklingError, OSError, EOFError) as e:
+            raise ValueError(f"Could not read or parse policy file {str(p)!r}: {e}") from e
         required = ("actions", "alpha", "gamma", "epsilon", "q")
         if not isinstance(payload, dict) or any(k not in payload for k in required):
             raise ValueError("Invalid policy file: missing keys or wrong format")
@@ -155,4 +165,3 @@ class RLPokerAgent:
             agent.q[k] = merged
         agent._training_extra = dict(payload.get("extra") or {})
         return agent
-

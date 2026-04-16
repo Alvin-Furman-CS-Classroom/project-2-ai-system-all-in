@@ -1,12 +1,13 @@
 """Integration tests for full_game_engine bot agent routing."""
 
 import random
-import sys
 import unittest
 from pathlib import Path
 
+import project_paths
+
 ROOT = Path(__file__).resolve().parent.parent.parent
-sys.path.insert(0, str(ROOT))
+project_paths.ensure_paths((ROOT,))
 
 from full_game_engine.bot_agents import normalize_agent, pick_bot_action
 from full_game_engine.hu_hand import apply_action, legal_actions, new_hand

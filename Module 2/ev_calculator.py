@@ -4,15 +4,15 @@ Calculates the expected value of a bet size given hand, position, stack sizes, a
 """
 
 import logging
-import sys
 from pathlib import Path
 from typing import Tuple, Optional, Dict, Any
 import re
 
+import project_paths
+
 # Add parent directory to path to access docs (guard against duplicates)
-_project_root = str(Path(__file__).parent.parent)
-if _project_root not in sys.path:
-    sys.path.insert(0, _project_root)
+_project_root = Path(__file__).parent.parent
+project_paths.ensure_paths((_project_root,))
 
 logger = logging.getLogger(__name__)
 

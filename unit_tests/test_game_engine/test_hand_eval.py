@@ -1,12 +1,13 @@
 """Tests for 7-card evaluation and HU preflop engine."""
 
 import random
-import sys
 import unittest
 from pathlib import Path
 
+import project_paths
+
 ROOT = Path(__file__).resolve().parent.parent.parent
-sys.path.insert(0, str(ROOT))
+project_paths.ensure_paths((ROOT,))
 
 from game_engine.cards import Card
 from game_engine.hand_eval import compare_at_showdown

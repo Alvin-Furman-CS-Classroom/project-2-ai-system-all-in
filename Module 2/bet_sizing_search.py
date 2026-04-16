@@ -7,14 +7,14 @@ from typing import Tuple, Optional, List, Dict, Any
 from dataclasses import dataclass
 from heapq import heappush, heappop
 import logging
-import sys
 import importlib.util
 from pathlib import Path
 
+import project_paths
+
 # Import dependencies (guard against duplicate path entries)
-_module2_dir = str(Path(__file__).parent)
-if _module2_dir not in sys.path:
-    sys.path.insert(0, _module2_dir)
+_module2_dir = Path(__file__).parent
+project_paths.ensure_paths((_module2_dir,))
 from ev_calculator import calculate_ev, calculate_ev_call, calculate_ev_fold
 from bet_size_discretization import get_bet_sizes_for_scenario, get_action_type
 from heuristic import heuristic_hand_strength_based, get_heuristic
