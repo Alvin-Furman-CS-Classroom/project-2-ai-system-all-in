@@ -23,22 +23,36 @@ from __future__ import annotations
 import argparse
 import itertools
 import math
+import os
 import random
 import statistics
+import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-import project_paths
+os.environ.setdefault("MPLBACKEND", "Agg")
 
-project_paths.ensure_project_root()
-ROOT = project_paths.PROJECT_ROOT
+import numpy as np
+import matplotlib.pyplot as plt
+
+ROOT = Path(__file__).resolve().parent.parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 from full_game_engine.bot_agents import pick_bot_action
 from full_game_engine.hu_hand import apply_action, legal_actions, new_hand, random_legal_action
 
 AGENTS = ["m2", "m3", "m4", "rl_optimal", "rl_coverage", "random"]
+DISPLAY_NAMES = {
+    "m2": "logic",
+    "m3": "monte carlo",
+    "m4": "LLM",
+    "rl_optimal": "rl optimal",
+    "rl_coverage": "rl coverage",
+    "random": "random",
+}
 
 
 @dataclass
@@ -69,6 +83,27 @@ def _parse_args() -> argparse.Namespace:
         default=str(ROOT / "docs" / "AGENT_MATCHUP_REPORT.md"),
         help="Output markdown report path.",
     )
+    p.add_argument(
+        "--heatmap-path",
+        type=str,
+        default=str(ROOT / "docs" / "agent_matchup_heatmap.png"),
+        help="Output image path for pairwise bb/100 heatmap.",
+    )
+    p.add_argument(
+        "--no-heatmap",
+        action="store_true",
+        help="Skip generating the heatmap image.",
+    )
+    p.add_argument(
+        "--include-self-matchups",
+        action="store_true",
+        help="Include self-play matchups (e.g., m2 vs m2).",
+    )
+    p.add_argument(
+        "--self-only",
+        action="store_true",
+        help="Run only self-play matchups for each agent.",
+    )
     return p.parse_args()
 
 
@@ -98,7 +133,7 @@ def _pick_action_with_metrics(
             meta = None
         else:
             act, meta = pick_bot_action(agent, state, rng)
-    except (RuntimeError, ValueError, TypeError, KeyError):
+    except Exception:
         metrics.decision_errors += 1
         metrics.fallbacks_to_random += 1
         act = random_legal_action(state, rng)
@@ -131,9 +166,10 @@ def _run_matchup(
     button = 0
 
     for _ in range(hands):
-        stacks = [stack_bb * bb_chips, stack_bb * bb_chips]
-        state = new_hand(stacks=stacks, rng=rng, button=button, sb_chips=sb_chips, bb_chips=bb_chips)
-        start_stacks = list(state.stacks)
+        initial_stacks = [stack_bb * bb_chips, stack_bb * bb_chips]
+        state = new_hand(stacks=initial_stacks, rng=rng, button=button, sb_chips=sb_chips, bb_chips=bb_chips)
+        # Use pre-blind stacks as the per-hand baseline so bb/100 is zero-sum.
+        start_stacks = initial_stacks
         # seat 0/1 map to agents A/B
         if button == 0:
             m_a.seat_sb_hands += 1
@@ -239,12 +275,75 @@ def _to_markdown(results: List[Dict[str, Any]], args: argparse.Namespace) -> str
     return "\n".join(lines) + "\n"
 
 
+def _build_bb100_matrix(results: List[Dict[str, Any]]) -> np.ndarray:
+    size = len(AGENTS)
+    matrix = np.full((size, size), np.nan, dtype=float)
+    idx = {agent: i for i, agent in enumerate(AGENTS)}
+
+    for result in results:
+        a = result["agent_a"]
+        b = result["agent_b"]
+        i = idx[a]
+        j = idx[b]
+        a_bb100 = float(result["a"]["bb100"])
+        if i == j:
+            # Self-play has two rows for the same agent with opposite signs.
+            # Display the positive side on the diagonal for readability.
+            b_bb100 = float(result["b"]["bb100"])
+            matrix[i, i] = max(a_bb100, b_bb100)
+        else:
+            matrix[i, j] = a_bb100
+            matrix[j, i] = -a_bb100
+    return matrix
+
+
+def _write_heatmap(results: List[Dict[str, Any]], heatmap_path: Path) -> None:
+    matrix = _build_bb100_matrix(results)
+    labels = [DISPLAY_NAMES.get(agent, agent) for agent in AGENTS]
+
+    finite_vals = matrix[np.isfinite(matrix)]
+    vmax = max(1.0, float(np.nanmax(np.abs(finite_vals))))
+
+    fig, ax = plt.subplots(figsize=(8.5, 7.0), constrained_layout=True)
+    im = ax.imshow(matrix, cmap="RdYlGn", vmin=-vmax, vmax=vmax)
+
+    ax.set_xticks(np.arange(len(labels)))
+    ax.set_yticks(np.arange(len(labels)))
+    ax.set_xticklabels(labels, rotation=25, ha="right")
+    ax.set_yticklabels(labels)
+    ax.set_title("Pairwise Agent Edge (bb/100)")
+
+    for i in range(len(labels)):
+        for j in range(len(labels)):
+            val = matrix[i, j]
+            text = f"{int(round(val))}" if np.isfinite(val) else "—"
+            ax.text(j, i, text, ha="center", va="center", fontsize=10, color="black")
+
+    ax.spines[:].set_visible(False)
+    ax.set_xticks(np.arange(-0.5, len(labels), 1), minor=True)
+    ax.set_yticks(np.arange(-0.5, len(labels), 1), minor=True)
+    ax.grid(which="minor", color="white", linestyle="-", linewidth=1.2)
+    ax.tick_params(which="minor", bottom=False, left=False)
+
+    cbar = fig.colorbar(im, ax=ax, shrink=0.9, pad=0.02)
+    cbar.set_label("bb/100")
+
+    heatmap_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(heatmap_path, dpi=220)
+    plt.close(fig)
+
+
 def main() -> None:
     args = _parse_args()
     rng = random.Random(args.seed)
     results: List[Dict[str, Any]] = []
 
-    pairs = list(itertools.combinations(AGENTS, 2))
+    if args.self_only:
+        pairs = [(agent, agent) for agent in AGENTS]
+    elif args.include_self_matchups:
+        pairs = list(itertools.combinations_with_replacement(AGENTS, 2))
+    else:
+        pairs = list(itertools.combinations(AGENTS, 2))
     for a, b in pairs:
         n_hands = args.llm_hands if ("m4" in (a, b)) else args.hands
         print(f"Running matchup {a} vs {b} ({n_hands} hands)...")
@@ -264,6 +363,11 @@ def main() -> None:
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(report, encoding="utf-8")
     print(f"Wrote report: {out}")
+
+    if not args.no_heatmap:
+        heatmap_out = Path(args.heatmap_path)
+        _write_heatmap(results, heatmap_out)
+        print(f"Wrote heatmap: {heatmap_out}")
 
 
 if __name__ == "__main__":
