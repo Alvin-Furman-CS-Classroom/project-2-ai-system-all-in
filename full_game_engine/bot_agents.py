@@ -97,13 +97,15 @@ def _m2_action(state: HandState, rng: random.Random) -> Dict[str, Any]:
         "board_features": _board_features(state, seat),
     }
     try:
+        # Use Module 1 playability filtering preflop; skip it on later streets.
+        use_module1_filter = state.street == "preflop"
         rec = optimal_bet_sizing_search(
             hand=hand,
             position=context["position"],
             stack_sizes=context["stack_sizes"],
             opponent_tendency="Unknown",
             search_algorithm="a_star",
-            use_module1=False,
+            use_module1=use_module1_filter,
             opponent_bet_size=context["opponent_bet_size"],
             pot_size=context["pot_size"],
             full_hand_context=context,
