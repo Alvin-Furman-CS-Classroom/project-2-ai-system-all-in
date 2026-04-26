@@ -304,20 +304,52 @@ def _write_heatmap(results: List[Dict[str, Any]], heatmap_path: Path) -> None:
     finite_vals = matrix[np.isfinite(matrix)]
     vmax = max(1.0, float(np.nanmax(np.abs(finite_vals))))
 
-    fig, ax = plt.subplots(figsize=(8.5, 7.0), constrained_layout=True)
+    tick_fs = 18
+    title_fs = 20
+    cell_fs = 18
+    cbar_tick_fs = 16
+    cbar_label_fs = 18
+
+    fig, ax = plt.subplots(figsize=(12.0, 10.0), constrained_layout=True)
     im = ax.imshow(matrix, cmap="RdYlGn", vmin=-vmax, vmax=vmax)
 
     ax.set_xticks(np.arange(len(labels)))
     ax.set_yticks(np.arange(len(labels)))
-    ax.set_xticklabels(labels, rotation=25, ha="right")
-    ax.set_yticklabels(labels)
-    ax.set_title("Pairwise Agent Edge (bb/100)")
+    # Column labels on top (common for heatmaps): keeps the bottom edge clean.
+    ax.set_xticklabels(
+        labels,
+        rotation=30,
+        ha="left",
+        rotation_mode="anchor",
+        fontsize=tick_fs,
+    )
+    ax.set_yticklabels(labels, fontsize=tick_fs, fontweight="bold")
+    ax.set_title("Pairwise Agent Edge (bb/100)", fontsize=title_fs, pad=22)
+    ax.tick_params(axis="y", labelsize=tick_fs, length=0)
+    ax.tick_params(
+        axis="x",
+        which="major",
+        bottom=False,
+        top=True,
+        labelbottom=False,
+        labeltop=True,
+        pad=8,
+        length=0,
+    )
 
     for i in range(len(labels)):
         for j in range(len(labels)):
             val = matrix[i, j]
             text = f"{int(round(val))}" if np.isfinite(val) else "—"
-            ax.text(j, i, text, ha="center", va="center", fontsize=10, color="black")
+            ax.text(
+                j,
+                i,
+                text,
+                ha="center",
+                va="center",
+                fontsize=cell_fs,
+                color="black",
+            )
 
     ax.spines[:].set_visible(False)
     ax.set_xticks(np.arange(-0.5, len(labels), 1), minor=True)
@@ -325,11 +357,17 @@ def _write_heatmap(results: List[Dict[str, Any]], heatmap_path: Path) -> None:
     ax.grid(which="minor", color="white", linestyle="-", linewidth=1.2)
     ax.tick_params(which="minor", bottom=False, left=False)
 
-    cbar = fig.colorbar(im, ax=ax, shrink=0.9, pad=0.02)
-    cbar.set_label("bb/100")
+    cbar = fig.colorbar(im, ax=ax, shrink=0.9, pad=0.06)
+    cbar.ax.tick_params(labelsize=cbar_tick_fs)
+    cbar.set_label("bb/100", fontsize=cbar_label_fs)
 
     heatmap_path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(heatmap_path, dpi=220)
+    fig.savefig(
+        heatmap_path,
+        dpi=220,
+        bbox_inches="tight",
+        pad_inches=0.45,
+    )
     plt.close(fig)
 
 
