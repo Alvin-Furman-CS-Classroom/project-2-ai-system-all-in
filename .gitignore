@@ -1,9 +1,11 @@
 .DS_Store
 *.env
+.env
 node_modules/
 _pycache_/
 *.pyc
 .venv/
+.venv_packages/
 .pytest_cache/
 .mypy_cache/
 .coverage
@@ -13,3 +15,4 @@ build/
 *.log
 .idea/
 .vscode/
+Module 5/checkpoints/*_missing_*.pkl
